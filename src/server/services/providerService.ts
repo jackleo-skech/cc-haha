@@ -526,6 +526,12 @@ export class ProviderService {
     }
   }
 
+  async getActiveProvider(): Promise<SavedProvider | null> {
+    const index = await this.readIndex()
+    if (!index.activeId) return null
+    return index.providers.find((p) => p.id === index.activeId) ?? null
+  }
+
   async getActiveProviderForProxy(): Promise<{
     baseUrl: string
     apiKey: string

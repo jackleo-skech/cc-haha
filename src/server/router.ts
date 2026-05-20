@@ -3,6 +3,8 @@
  */
 
 import { handleSessionsApi } from './api/sessions.js'
+import { handleModelsCatalogApi } from './api/models-catalog.js'
+import { handleTranslateApi } from './api/translate.js'
 import { handleSettingsApi } from './api/settings.js'
 import { handleModelsApi } from './api/models.js'
 import { handleScheduledTasksApi } from './api/scheduled-tasks.js'
@@ -36,7 +38,11 @@ export async function handleApiRequest(req: Request, url: URL): Promise<Response
   const resource = segments[1]
 
   switch (resource) {
-    case 'sessions': {
+    case 'translate':
+      return handleTranslateApi(req, url, segments)
+case 'models-catalog':
+      return handleModelsCatalogApi(req, url, segments)
+case 'sessions': {
       // Route /api/sessions/:id/chat/* to conversations handler
       const subResource = segments[3]
       if (subResource === 'chat') {
