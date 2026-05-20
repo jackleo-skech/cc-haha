@@ -28,6 +28,7 @@ export const ModelMappingSchema = z.object({
   haiku: z.string(),
   sonnet: z.string(),
   opus: z.string(),
+  translate: z.string().optional(),
 })
 
 export const AutoCompactWindowSchema = z.number().int().min(16000).max(10000000)

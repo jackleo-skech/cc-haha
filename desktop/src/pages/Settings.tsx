@@ -584,6 +584,7 @@ function normalizeModelMapping(models: ModelMapping): ModelMapping {
     haiku: models.haiku.trim() || main,
     sonnet: models.sonnet.trim() || main,
     opus: models.opus.trim() || main,
+    translate: models.translate?.trim() || undefined,
   }
 }
 

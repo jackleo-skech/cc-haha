@@ -11,6 +11,7 @@ const ModelMappingSchema = z.object({
   haiku: z.string(),
   sonnet: z.string(),
   opus: z.string(),
+  translate: z.string().optional(),
 })
 
 const ProviderPresetSchema = z.object({
