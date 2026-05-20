@@ -405,4 +405,12 @@ export const sessionsApi = {
       timeout: 60_000,
     })
   },
+
+  export(sessionId: string) {
+    return api.get(`/api/sessions/${sessionId}/export`)
+  },
+
+  import(data: Record<string, unknown>) {
+    return api.post<{ sessionId: string }>('/api/sessions/import', data)
+  },
 }
