@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@testing-library/jest-dom'
 
@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   getMessages: vi.fn(),
   getSlashCommands: vi.fn(),
   listSkills: vi.fn(),
+  search: vi.fn(),
+  browse: vi.fn(),
   getTasksForList: vi.fn(),
   resetTaskList: vi.fn(),
   wsClearHandlers: vi.fn(),
@@ -16,6 +18,9 @@ const mocks = vi.hoisted(() => ({
   wsOnMessage: vi.fn(),
   wsSend: vi.fn(),
   wsDisconnect: vi.fn(),
+  dialogOpen: vi.fn(),
+  webviewDragHandlers: [] as Array<(event: { payload: unknown }) => void>,
+  webviewUnlisten: vi.fn(),
   isMobile: false,
   isTauriRuntime: false,
 }))
@@ -33,6 +38,13 @@ vi.mock('../api/sessions', () => ({
 vi.mock('../api/skills', () => ({
   skillsApi: {
     list: mocks.listSkills,
+  },
+}))
+
+vi.mock('../api/filesystem', () => ({
+  filesystemApi: {
+    search: mocks.search,
+    browse: mocks.browse,
   },
 }))
 
@@ -61,6 +73,19 @@ vi.mock('../lib/desktopRuntime', () => ({
   isTauriRuntime: () => mocks.isTauriRuntime,
 }))
 
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: mocks.dialogOpen,
+}))
+
+vi.mock('@tauri-apps/api/webview', () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: vi.fn(async (handler: (event: { payload: unknown }) => void) => {
+      mocks.webviewDragHandlers.push(handler)
+      return mocks.webviewUnlisten
+    }),
+  }),
+}))
+
 vi.mock('../components/shared/DirectoryPicker', () => ({
   DirectoryPicker: ({ value, onChange }: { value: string; onChange: (path: string) => void }) => (
     <button type="button" aria-label="Pick project" data-value={value} onClick={() => onChange('/workspace/project')}>
@@ -86,54 +111,13 @@ vi.mock('../components/controls/ModelSelector', () => ({
 }))
 
 import { EmptySession } from './EmptySession'
-import { ApiError } from '../api/client'
 import { useChatStore } from '../stores/chatStore'
 import { useSessionRuntimeStore } from '../stores/sessionRuntimeStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useTabStore } from '../stores/tabStore'
 import { useUIStore } from '../stores/uiStore'
-import type { RepositoryContextResult } from '../api/sessions'
-
-function okRepositoryContext(overrides: Partial<RepositoryContextResult> = {}): RepositoryContextResult {
-  return {
-    state: 'ok',
-    workDir: '/workspace/project',
-    repoRoot: '/workspace/project',
-    repoName: 'project',
-    currentBranch: 'main',
-    defaultBranch: 'main',
-    dirty: false,
-    branches: [{
-      name: 'main',
-      current: true,
-      local: true,
-      remote: false,
-      checkedOut: true,
-      worktreePath: '/workspace/project',
-    }],
-    worktrees: [{
-      path: '/workspace/project',
-      branch: 'main',
-      current: true,
-    }],
-    ...overrides,
-  }
-}
-
-function notGitRepositoryContext(): RepositoryContextResult {
-  return {
-    state: 'not_git_repo',
-    workDir: '/workspace/project',
-    repoRoot: null,
-    repoName: null,
-    currentBranch: null,
-    defaultBranch: null,
-    dirty: false,
-    branches: [],
-    worktrees: [],
-  }
-}
+import { usePluginStore } from '../stores/pluginStore'
 
 describe('EmptySession', () => {
   const initialSessionState = useSessionStore.getInitialState()
@@ -141,9 +125,11 @@ describe('EmptySession', () => {
   const initialTabState = useTabStore.getInitialState()
   const initialRuntimeState = useSessionRuntimeStore.getInitialState()
   const initialUiState = useUIStore.getInitialState()
+  const initialPluginState = usePluginStore.getInitialState()
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.webviewDragHandlers.length = 0
     mocks.isMobile = false
     mocks.isTauriRuntime = false
     useSettingsStore.setState({ locale: 'en', activeProviderName: null })
@@ -152,9 +138,9 @@ describe('EmptySession', () => {
     useTabStore.setState(initialTabState, true)
     useSessionRuntimeStore.setState(initialRuntimeState, true)
     useUIStore.setState(initialUiState, true)
+    usePluginStore.setState(initialPluginState, true)
 
     mocks.createSession.mockResolvedValue({ sessionId: 'draft-session' })
-    mocks.getRepositoryContext.mockResolvedValue(okRepositoryContext())
     mocks.listSessions.mockResolvedValue({
       sessions: [{
         id: 'draft-session',
@@ -171,6 +157,12 @@ describe('EmptySession', () => {
     mocks.getMessages.mockResolvedValue({ messages: [] })
     mocks.getSlashCommands.mockResolvedValue({ commands: [] })
     mocks.listSkills.mockResolvedValue({ skills: [] })
+    mocks.search.mockResolvedValue({
+      currentPath: '/workspace/project',
+      parentPath: null,
+      query: '',
+      entries: [],
+    })
     mocks.getTasksForList.mockResolvedValue({ tasks: [] })
     mocks.resetTaskList.mockResolvedValue(undefined)
   })
@@ -182,70 +174,85 @@ describe('EmptySession', () => {
     useTabStore.setState(initialTabState, true)
     useSessionRuntimeStore.setState(initialRuntimeState, true)
     useUIStore.setState(initialUiState, true)
+    usePluginStore.setState(initialPluginState, true)
   })
 
-  it('uses compact composer controls on phone-sized H5 browsers', async () => {
-    mocks.isMobile = true
+  function getComposerPanel(): HTMLElement {
+    const textarea = screen.getByRole('textbox')
+    const panel = textarea.closest('.glass-panel')
+    if (!panel) throw new Error('Could not find composer panel (.glass-panel)')
+    return panel as HTMLElement
+  }
+
+  function getHiddenFileInput(): HTMLInputElement {
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')
+    if (!input) throw new Error('Could not find hidden file input')
+    return input
+  }
+
+  it('shows default (non-compact) composer controls', () => {
+    render(<EmptySession />)
+
+    expect(screen.getByTestId('permission-mode-selector')).toHaveAttribute('data-compact', 'false')
+    expect(screen.getByTestId('model-selector')).toHaveAttribute('data-compact', 'false')
+  })
+
+  it('loads slash commands on mount', async () => {
+    mocks.listSkills.mockResolvedValueOnce({
+      skills: [
+        {
+          name: 'draw:render',
+          description: 'Render with the drawing plugin.',
+          userInvocable: true,
+        },
+      ],
+    })
 
     render(<EmptySession />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('permission-mode-selector')).toHaveAttribute('data-compact', 'true')
+      expect(mocks.listSkills).toHaveBeenCalledTimes(1)
     })
-    expect(screen.getByTestId('model-selector')).toHaveAttribute('data-compact', 'true')
-    expect(screen.getByRole('button', { name: 'Run' })).toHaveClass('h-11', 'w-11')
-    expect(screen.getByTestId('empty-session-composer-shell')).toHaveClass('px-3')
-    expect(screen.getByTestId('empty-session-composer-panel')).toHaveClass('rounded-2xl')
   })
 
-  it('creates a session with the selected project and branch when submitted', async () => {
+  it('shows filtered slash commands when typing slash prefix', async () => {
+    mocks.listSkills.mockResolvedValueOnce({
+      skills: [
+        {
+          name: 'superpowers:brainstorming',
+          description: 'Creative work planning.',
+          userInvocable: true,
+        },
+        {
+          name: 'agent-team-orchestrator',
+          description: 'Agent Teams can use Subagent orchestration.',
+          userInvocable: true,
+        },
+      ],
+    })
+
     render(<EmptySession />)
 
-    fireEvent.change(screen.getByRole('textbox'), {
-      target: { value: 'draft question', selectionStart: 14 },
+    await waitFor(() => {
+      expect(screen.getByRole('textbox')).toBeInTheDocument()
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
 
-    expect(mocks.createSession).not.toHaveBeenCalled()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+
+    fireEvent.change(textarea, {
+      target: { value: '/su', selectionStart: 3 },
+    })
 
     await waitFor(() => {
-      expect(screen.getByText('main')).toBeInTheDocument()
+      const commandButtons = screen
+        .getAllByRole('button')
+        .filter((button) => button.textContent?.startsWith('/'))
+      expect(commandButtons.length).toBeGreaterThan(0)
     })
-
-    const runButton = screen.getByRole('button', { name: /Run/i })
-    await waitFor(() => {
-      expect(runButton).not.toBeDisabled()
-    })
-
-    fireEvent.click(runButton)
-
-    await waitFor(() => {
-      expect(mocks.createSession).toHaveBeenCalledWith({
-        workDir: '/workspace/project',
-        repository: { branch: 'main', worktree: false },
-      })
-    })
-
-    expect(useTabStore.getState().activeTabId).toBe('draft-session')
-    expect(useTabStore.getState().tabs).toEqual([
-      { sessionId: 'draft-session', title: 'draft question', type: 'session', status: 'idle' },
-    ])
-    expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      id: 'draft-session',
-      workDir: '/workspace/project',
-    })
-    const messages = useChatStore.getState().sessions['draft-session']?.messages ?? []
-    expect(messages[messages.length - 1]).toMatchObject({
-      type: 'user_text',
-      content: 'draft question',
-    })
-    expect(mocks.wsSend).toHaveBeenCalledWith('draft-session', {
-      type: 'user_message',
-      content: 'draft question',
-      attachments: [],
-    })
-    expect(mocks.wsConnect).toHaveBeenCalledWith('draft-session')
-    expect(useSessionRuntimeStore.getState().selections['draft-session']).toBeUndefined()
   })
 
   it('stores and replays a draft runtime only when the user explicitly selected one', async () => {
@@ -284,226 +291,132 @@ describe('EmptySession', () => {
     ])
   })
 
-  it('starts in a selected non-Git project without showing a repository warning', async () => {
-    mocks.getRepositoryContext.mockResolvedValueOnce(notGitRepositoryContext())
-
+  it('creates a session when submitted with input', async () => {
     render(<EmptySession />)
 
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'draft question', selectionStart: 14 },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Run/i })).not.toBeDisabled()
-    })
-
-    expect(screen.queryByText('Current project is not a Git repository.')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Select branch:/ })).not.toBeInTheDocument()
-    expect(screen.queryByText('Current worktree')).not.toBeInTheDocument()
-
     fireEvent.click(screen.getByRole('button', { name: /Run/i }))
 
     await waitFor(() => {
-      expect(mocks.createSession).toHaveBeenCalledWith({
-        workDir: '/workspace/project',
-      })
+      expect(mocks.createSession).toHaveBeenCalledWith({})
     })
+
+    expect(useTabStore.getState().activeTabId).toBe('draft-session')
+    expect(useChatStore.getState().sessions['draft-session']?.messages.slice(-1)[0]).toMatchObject({
+      type: 'user_text',
+      content: 'draft question',
+    })
+    expect(mocks.wsSend).toHaveBeenCalledWith('draft-session', {
+      type: 'user_message',
+      content: 'draft question',
+      attachments: [],
+    })
+    expect(mocks.wsConnect).toHaveBeenCalledWith('draft-session')
+    expect(useSessionRuntimeStore.getState().selections['draft-session']).toBeUndefined()
   })
 
-  it('shows an actionable repository error when direct branch switching is blocked', async () => {
-    mocks.createSession.mockRejectedValueOnce(new ApiError(400, {
-      error: 'REPOSITORY_DIRTY_WORKTREE',
-      message: 'Working tree has uncommitted changes.',
-    }))
-
+  it('creates a session with workDir when a project is picked', async () => {
     render(<EmptySession />)
 
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'draft question', selectionStart: 14 },
     })
+
     fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
 
     await waitFor(() => {
-      expect(screen.getByText('main')).toBeInTheDocument()
+      expect(mocks.createSession).toHaveBeenCalledWith({ workDir: '/workspace/project' })
     })
 
-    fireEvent.click(screen.getByRole('button', { name: /Run/i }))
-
-    await waitFor(() => {
-      const toasts = useUIStore.getState().toasts
-      expect(toasts[toasts.length - 1]?.message).toBe(
-        'Current project has uncommitted changes. Direct branch switching was blocked; enable "Isolated worktree" or commit/stash your changes first.',
-      )
-    })
-    expect(useTabStore.getState().activeTabId).toBeNull()
+    expect(useTabStore.getState().activeTabId).toBe('draft-session')
   })
 
-  it('keeps Run disabled until repository context resolves for a selected project', async () => {
-    let resolveContext: (context: RepositoryContextResult) => void = () => {}
-    mocks.getRepositoryContext.mockImplementationOnce(() => new Promise<RepositoryContextResult>((resolve) => {
-      resolveContext = resolve
-    }))
-
+  it('handles file selection via hidden file input', async () => {
     render(<EmptySession />)
 
-    fireEvent.change(screen.getByRole('textbox'), {
-      target: { value: 'draft question', selectionStart: 14 },
+    const fileInput = getHiddenFileInput()
+    const file = new File(['file content'], 'test-file.log', { type: 'text/plain' })
+
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [file] } })
+      await new Promise((resolve) => setTimeout(resolve, 100))
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Run/i })).toBeDisabled()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: /Run/i }))
-    expect(mocks.createSession).not.toHaveBeenCalled()
-
-    resolveContext(okRepositoryContext())
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Run/i })).not.toBeDisabled()
-    })
+    expect(await screen.findByText('test-file.log')).toBeInTheDocument()
   })
 
-  it('falls back to a visible branch when the current branch is an internal desktop worktree branch', async () => {
-    mocks.getRepositoryContext.mockResolvedValueOnce(okRepositoryContext({
-      currentBranch: 'worktree-desktop-feature-a-12345678',
-      defaultBranch: 'main',
-      branches: [
-        {
-          name: 'main',
-          current: false,
-          local: true,
-          remote: false,
-          checkedOut: false,
-        },
-        {
-          name: 'feature/a',
-          current: false,
-          local: true,
-          remote: false,
-          checkedOut: false,
-        },
+  it('handles file drop on the composer panel', async () => {
+    render(<EmptySession />)
+
+    const panel = getComposerPanel()
+    const file = new File(['file content'], 'dropped-file.txt', { type: 'text/plain' })
+    const dataTransfer = { files: [file] }
+
+    await act(async () => {
+      fireEvent.drop(panel, { dataTransfer })
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    })
+
+    expect(await screen.findByText('dropped-file.txt')).toBeInTheDocument()
+  })
+
+  it('shows FileSearchMenu when typing @ trigger', async () => {
+    mocks.search.mockResolvedValueOnce({
+      currentPath: '/workspace/project',
+      parentPath: null,
+      query: '',
+      entries: [
+        { name: 'README.md', path: '/workspace/project/README.md', isDirectory: false },
       ],
-      worktrees: [{
-        path: '/workspace/project/.claude/worktrees/desktop-feature-a-12345678',
-        branch: 'worktree-desktop-feature-a-12345678',
-        current: true,
-      }],
-    }))
+    })
 
     render(<EmptySession />)
 
-    fireEvent.change(screen.getByRole('textbox'), {
-      target: { value: 'draft question', selectionStart: 14 },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
-
-    await waitFor(() => {
-      expect(screen.getByText('main')).toBeInTheDocument()
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(textarea, {
+      target: { value: '@readme', selectionStart: 7 },
     })
 
-    expect(screen.queryByText('worktree-desktop-feature-a-12345678')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: /Run/i }))
-
-    await waitFor(() => {
-      expect(mocks.createSession).toHaveBeenCalledWith({
-        workDir: '/workspace/project',
-        repository: { branch: 'main', worktree: false },
-      })
-    })
+    expect(await screen.findByText('README.md')).toBeInTheDocument()
   })
 
-  it('keeps the repository launch context on one row and truncates long branch names', async () => {
-    const longBranch = 'feature/super-long-branch-name-for-repository-launch-controls-e2e'
-    mocks.getRepositoryContext.mockResolvedValueOnce(okRepositoryContext({
-      currentBranch: longBranch,
-      defaultBranch: 'main',
-      branches: [{
-        name: longBranch,
-        current: true,
-        local: true,
-        remote: false,
-        checkedOut: true,
-        worktreePath: '/workspace/project',
-      }],
-      worktrees: [{
-        path: '/workspace/project',
-        branch: longBranch,
-        current: true,
-      }],
-    }))
+  it('opens file picker from the plus menu in native desktop', () => {
+    mocks.isTauriRuntime = true
 
     render(<EmptySession />)
 
-    fireEvent.change(screen.getByRole('textbox'), {
-      target: { value: 'draft question', selectionStart: 14 },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
-
-    const branchButton = await screen.findByRole('button', { name: new RegExp(`Select branch: ${longBranch}`) })
-    const branchClasses = branchButton.className.split(/\s+/)
-    expect(branchButton.parentElement?.className).toContain('flex-nowrap')
-    expect(branchButton.parentElement?.className).not.toContain('flex-wrap')
-    expect(branchClasses).toContain('max-w-[260px]')
-    expect(branchClasses).not.toContain('max-w-full')
-    expect(branchButton.querySelector('span')?.className).toContain('truncate')
+    fireEvent.click(screen.getByLabelText('Open composer tools'))
+    expect(screen.getByText('Add files or photos')).toBeInTheDocument()
   })
 
-  it('keeps current worktree selectable when the fallback branch is checked out elsewhere', async () => {
-    mocks.getRepositoryContext.mockResolvedValueOnce(okRepositoryContext({
-      currentBranch: null,
-      defaultBranch: 'main',
-      branches: [
-        {
-          name: 'main',
-          current: false,
-          local: true,
-          remote: false,
-          checkedOut: true,
-          worktreePath: '/workspace/project',
-        },
-        {
-          name: 'feature/a',
-          current: false,
-          local: true,
-          remote: false,
-          checkedOut: false,
-        },
-      ],
-      worktrees: [{
-        path: '/workspace/project/.codex/worktrees/detached/project',
-        branch: null,
-        current: true,
-      }],
-    }))
+  it('keeps Run disabled when input is empty and no attachments', () => {
+    render(<EmptySession />)
 
+    expect(screen.getByRole('button', { name: /Run/i })).toBeDisabled()
+  })
+
+  it('enables Run after typing text', () => {
     render(<EmptySession />)
 
     fireEvent.change(screen.getByRole('textbox'), {
-      target: { value: 'draft question', selectionStart: 14 },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
-
-    await waitFor(() => {
-      expect(screen.getByText('main')).toBeInTheDocument()
-      expect(screen.getByText('Current worktree')).toBeInTheDocument()
+      target: { value: 'hello' },
     })
 
-    expect(screen.getByText('Selected branch is already checked out in another worktree. Direct launch may be blocked by Git; use "Isolated worktree" to avoid changing directories.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Run/i })).not.toBeDisabled()
+  })
 
-    fireEvent.click(screen.getByRole('button', { name: /Select worktree mode: Current worktree/ }))
-    expect(await screen.findByRole('option', { name: 'Current worktree' })).not.toBeDisabled()
+  it('dismisses the plus menu when clicking outside', async () => {
+    render(<EmptySession />)
 
-    fireEvent.click(screen.getByRole('button', { name: /Run/i }))
+    fireEvent.click(screen.getByLabelText('Open composer tools'))
+    expect(screen.getByText('Add files or photos')).toBeInTheDocument()
+
+    fireEvent.mouseDown(document.body)
 
     await waitFor(() => {
-      expect(mocks.createSession).toHaveBeenCalledWith({
-        workDir: '/workspace/project',
-        repository: { branch: 'main', worktree: false },
-      })
+      expect(screen.queryByText('Add files or photos')).not.toBeInTheDocument()
     })
   })
 })

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { isThemeMode, type ThemeMode } from '../types/settings'
+import { THEME_MODES, isThemeMode, type ThemeMode } from '../types/settings'
 
 const THEME_STORAGE_KEY = 'cc-haha-theme'
 
@@ -8,7 +8,7 @@ function getStoredTheme(): ThemeMode {
     const stored = localStorage.getItem(THEME_STORAGE_KEY)
     if (isThemeMode(stored)) return stored
   } catch { /* localStorage unavailable */ }
-  return 'light'
+  return 'white'
 }
 
 export function applyTheme(theme: ThemeMode) {
@@ -39,6 +39,7 @@ export type SettingsTab =
   | 'mcp'
   | 'agents'
   | 'skills'
+  | 'memory'
   | 'plugins'
   | 'computerUse'
   | 'diagnostics'
@@ -51,6 +52,7 @@ type UIStore = {
   sidebarOpen: boolean
   activeView: ActiveView
   pendingSettingsTab: SettingsTab | null
+  pendingMemoryPath: string | null
   activeModal: string | null
   toasts: Toast[]
 
@@ -60,6 +62,7 @@ type UIStore = {
   setSidebarOpen: (open: boolean) => void
   setActiveView: (view: ActiveView) => void
   setPendingSettingsTab: (tab: SettingsTab | null) => void
+  setPendingMemoryPath: (path: string | null) => void
   openModal: (id: string) => void
   closeModal: () => void
   addToast: (toast: Omit<Toast, 'id'>) => void
@@ -73,6 +76,7 @@ export const useUIStore = create<UIStore>((set) => ({
   sidebarOpen: true,
   activeView: 'code',
   pendingSettingsTab: null,
+  pendingMemoryPath: null,
   activeModal: null,
   toasts: [],
 
@@ -84,7 +88,8 @@ export const useUIStore = create<UIStore>((set) => ({
 
   toggleTheme: () => {
     set((state) => {
-      const next = state.theme === 'light' ? 'dark' : state.theme === 'dark' ? 'cool' : 'light'
+      const currentIndex = THEME_MODES.indexOf(state.theme)
+      const next = THEME_MODES[(currentIndex + 1) % THEME_MODES.length] ?? 'white'
       applyTheme(next)
       try { localStorage.setItem(THEME_STORAGE_KEY, next) } catch { /* noop */ }
       return { theme: next }
@@ -95,6 +100,7 @@ export const useUIStore = create<UIStore>((set) => ({
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setActiveView: (view) => set({ activeView: view }),
   setPendingSettingsTab: (tab) => set({ pendingSettingsTab: tab }),
+  setPendingMemoryPath: (path) => set({ pendingMemoryPath: path }),
   openModal: (id) => set({ activeModal: id }),
   closeModal: () => set({ activeModal: null }),
 

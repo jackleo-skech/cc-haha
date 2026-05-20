@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import '@testing-library/jest-dom'
 
 import { Settings } from '../pages/Settings'
@@ -8,7 +8,7 @@ import { useUIStore } from '../stores/uiStore'
 import { useUpdateStore } from '../stores/updateStore'
 import type { SavedProvider } from '../types/provider'
 import type { ProviderPreset } from '../types/providerPreset'
-import type { ThemeMode } from '../types/settings'
+import type { AppMode, ThemeMode, UpdateProxySettings } from '../types/settings'
 
 const MOCK_DELETE_PROVIDER = vi.fn()
 const MOCK_GET_SETTINGS = vi.fn()
@@ -21,6 +21,15 @@ const desktopNotificationsMock = vi.hoisted(() => ({
 }))
 const clipboardMock = vi.hoisted(() => ({
   copyTextToClipboard: vi.fn(),
+}))
+const tauriCoreMock = vi.hoisted(() => ({
+  invoke: vi.fn(),
+}))
+const tauriDialogMock = vi.hoisted(() => ({
+  open: vi.fn(),
+}))
+const tauriProcessMock = vi.hoisted(() => ({
+  relaunch: vi.fn(),
 }))
 const providerStoreState = {
   providers: [] as SavedProvider[],
@@ -59,6 +68,9 @@ vi.mock('../api/providers', () => ({
 
 vi.mock('../lib/desktopNotifications', () => desktopNotificationsMock)
 vi.mock('../components/chat/clipboard', () => clipboardMock)
+vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
+vi.mock('@tauri-apps/plugin-dialog', () => tauriDialogMock)
+vi.mock('@tauri-apps/plugin-process', () => tauriProcessMock)
 vi.mock('qrcode', () => ({
   default: {
     toDataURL: vi.fn().mockResolvedValue('data:image/png;base64,h5qr'),
@@ -120,6 +132,13 @@ describe('Settings > General tab', () => {
     desktopNotificationsMock.openDesktopNotificationSettings.mockResolvedValue(true)
     clipboardMock.copyTextToClipboard.mockReset()
     clipboardMock.copyTextToClipboard.mockResolvedValue(true)
+    tauriCoreMock.invoke.mockReset()
+    tauriCoreMock.invoke.mockResolvedValue(undefined)
+    tauriDialogMock.open.mockReset()
+    tauriDialogMock.open.mockResolvedValue('/Users/test/cc-haha-data')
+    tauriProcessMock.relaunch.mockReset()
+    tauriProcessMock.relaunch.mockResolvedValue(undefined)
+    delete (window as unknown as { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
     MOCK_GET_SETTINGS.mockResolvedValue({})
     MOCK_UPDATE_SETTINGS.mockResolvedValue({})
     providerStoreState.providers = []
@@ -144,6 +163,7 @@ describe('Settings > General tab', () => {
       skipWebFetchPreflight: true,
       desktopNotificationsEnabled: true,
       responseLanguage: '',
+      uiZoom: 1,
       webSearch: { mode: 'auto', tavilyApiKey: '', braveApiKey: '' },
       h5Access: {
         enabled: false,
@@ -167,8 +187,32 @@ describe('Settings > General tab', () => {
       setResponseLanguage: vi.fn().mockImplementation(async (language: string) => {
         useSettingsStore.setState({ responseLanguage: language })
       }),
+      setUiZoom: vi.fn().mockImplementation((uiZoom: number) => {
+        useSettingsStore.setState({ uiZoom })
+      }),
       setWebSearch: vi.fn().mockImplementation(async (webSearch) => {
         useSettingsStore.setState({ webSearch })
+      }),
+      appMode: {
+        mode: 'default',
+        portableDir: null,
+        defaultPortableDir: '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR',
+        activeConfigDir: null,
+        configDirSource: 'system',
+      },
+      appModeRequiresRestart: false,
+      fetchAppMode: vi.fn().mockResolvedValue(undefined),
+      setAppMode: vi.fn().mockImplementation(async (mode: AppMode, portableDir?: string | null) => {
+        useSettingsStore.setState({
+          appMode: {
+            mode,
+            portableDir: mode === 'portable' ? portableDir ?? '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR' : null,
+            defaultPortableDir: '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR',
+            activeConfigDir: mode === 'portable' ? portableDir ?? '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR' : null,
+            configDirSource: mode === 'portable' ? 'portable' : 'system',
+          },
+          appModeRequiresRestart: true,
+        })
       }),
       enableH5Access: vi.fn().mockImplementation(async () => {
         const current = useSettingsStore.getState().h5Access
@@ -236,7 +280,13 @@ describe('Settings > General tab', () => {
     render(<Settings />)
 
     fireEvent.click(screen.getByText('General'))
-    fireEvent.click(screen.getByRole('button', { name: 'Pure White' }))
+    const pureWhite = screen.getByRole('button', { name: 'White' })
+    const light = screen.getByRole('button', { name: 'Light' })
+    const dark = screen.getByRole('button', { name: 'Dark' })
+
+    expect((pureWhite.compareDocumentPosition(light) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+    expect((light.compareDocumentPosition(dark) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'White' }))
 
     expect(useSettingsStore.getState().setTheme).toHaveBeenCalledWith('white')
   })
@@ -248,7 +298,247 @@ describe('Settings > General tab', () => {
     fireEvent.click(screen.getByText('General'))
 
     expect(screen.getByRole('button', { name: 'Cool' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: 'Warm Classic' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'Light' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('keeps UI zoom below system notifications because it is a secondary setting', () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+
+    const notificationsHeading = screen.getByRole('heading', { name: 'System Notifications' })
+    const uiZoomHeading = screen.getByRole('heading', { name: 'UI Zoom' })
+    const webFetchHeading = screen.getByRole('heading', { name: 'WebFetch Preflight' })
+
+    expect((notificationsHeading.compareDocumentPosition(uiZoomHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+    expect((uiZoomHeading.compareDocumentPosition(webFetchHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+  })
+
+  it('keeps data storage at the bottom of General settings', () => {
+    const tauriWindow = window as unknown as { __TAURI_INTERNALS__?: object }
+    tauriWindow.__TAURI_INTERNALS__ = {}
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+
+    const webSearchHeading = screen.getByRole('heading', { name: 'WebSearch' })
+    const storageHeading = screen.getByRole('heading', { name: 'Data Storage Location' })
+
+    expect((webSearchHeading.compareDocumentPosition(storageHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+    expect(screen.getByText(/Switching directories does not migrate existing data/)).toBeInTheDocument()
+  })
+
+  it('lets desktop users choose a portable data directory and relaunch immediately', async () => {
+    const tauriWindow = window as unknown as { __TAURI_INTERNALS__?: object }
+    tauriWindow.__TAURI_INTERNALS__ = {}
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Folder' }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Portable data directory')).toHaveValue('/Users/test/cc-haha-data')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use This Folder and Restart' }))
+    expect(screen.getByText('Switch data storage location?')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save and Restart' }))
+
+    await waitFor(() => {
+      expect(useSettingsStore.getState().setAppMode).toHaveBeenCalledWith('portable', '/Users/test/cc-haha-data')
+      expect(tauriCoreMock.invoke).toHaveBeenCalledWith('prepare_for_app_mode_restart')
+      expect(tauriProcessMock.relaunch).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('switches back to the system directory without deleting portable data', async () => {
+    const tauriWindow = window as unknown as { __TAURI_INTERNALS__?: object }
+    tauriWindow.__TAURI_INTERNALS__ = {}
+    useSettingsStore.setState({
+      appMode: {
+        mode: 'portable',
+        portableDir: '/Users/test/cc-haha-data',
+        defaultPortableDir: '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR',
+        activeConfigDir: '/Users/test/cc-haha-data',
+        configDirSource: 'portable',
+      },
+    })
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByRole('button', { name: /Use system directory/ }))
+
+    expect(screen.getByText(/Data in the portable directory is not deleted/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save and Restart' }))
+
+    await waitFor(() => {
+      expect(useSettingsStore.getState().setAppMode).toHaveBeenCalledWith('default', null)
+      expect(tauriCoreMock.invoke).toHaveBeenCalledWith('prepare_for_app_mode_restart')
+      expect(tauriProcessMock.relaunch).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('validates portable directory input and lets users reset to the app-side folder', async () => {
+    const tauriWindow = window as unknown as { __TAURI_INTERNALS__?: object }
+    tauriWindow.__TAURI_INTERNALS__ = {}
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    const input = screen.getByLabelText('Portable data directory')
+
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Use This Folder and Restart' }))
+    expect(screen.getByText('Choose or enter a portable data directory first.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use the default portable folder beside the app' }))
+    expect(input).toHaveValue('/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR')
+    expect(screen.queryByText('Choose or enter a portable data directory first.')).not.toBeInTheDocument()
+  })
+
+  it('shows folder picker failures as an inline storage error', async () => {
+    const tauriWindow = window as unknown as { __TAURI_INTERNALS__?: object }
+    tauriWindow.__TAURI_INTERNALS__ = {}
+    tauriDialogMock.open.mockRejectedValueOnce(new Error('dialog unavailable'))
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Folder' }))
+
+    expect(await screen.findByText('Could not open the folder picker. Paste the folder path manually.')).toBeInTheDocument()
+  })
+
+  it('treats external CLAUDE_CONFIG_DIR as the controlling data source', async () => {
+    const tauriWindow = window as unknown as { __TAURI_INTERNALS__?: object }
+    tauriWindow.__TAURI_INTERNALS__ = {}
+    useSettingsStore.setState({
+      appMode: {
+        mode: 'portable',
+        portableDir: '/env/claude-data',
+        defaultPortableDir: '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR',
+        activeConfigDir: '/env/claude-data',
+        configDirSource: 'environment',
+      },
+    })
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    expect(screen.getByText(/The current directory is controlled by the CLAUDE_CONFIG_DIR environment variable/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Use system directory/ }))
+    expect(screen.getByText(/Remove it from the launch environment before switching back/)).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Portable data directory'), { target: { value: '/other/data' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Use This Folder and Restart' }))
+    expect(screen.queryByText('Switch data storage location?')).not.toBeInTheDocument()
+    expect(screen.getByText(/Remove it from the launch environment before switching back/)).toBeInTheDocument()
+  })
+
+  it('keeps mode switch confirmation cancelable before restart starts', async () => {
+    const tauriWindow = window as unknown as { __TAURI_INTERNALS__?: object }
+    tauriWindow.__TAURI_INTERNALS__ = {}
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByRole('button', { name: 'Use This Folder and Restart' }))
+    expect(screen.getByText('Switch data storage location?')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    await waitFor(() => {
+      expect(screen.queryByText('Switch data storage location?')).not.toBeInTheDocument()
+    })
+    expect(useSettingsStore.getState().setAppMode).not.toHaveBeenCalled()
+  })
+
+  it('shows restart preparation failures without relaunching', async () => {
+    const tauriWindow = window as unknown as { __TAURI_INTERNALS__?: object }
+    tauriWindow.__TAURI_INTERNALS__ = {}
+    tauriCoreMock.invoke.mockRejectedValueOnce(new Error('restart preparation failed'))
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByRole('button', { name: 'Use This Folder and Restart' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save and Restart' }))
+
+    expect(await screen.findByText('restart preparation failed')).toBeInTheDocument()
+    expect(tauriProcessMock.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('shows the saved restart-required state inside the storage section', () => {
+    const tauriWindow = window as unknown as { __TAURI_INTERNALS__?: object }
+    tauriWindow.__TAURI_INTERNALS__ = {}
+    useSettingsStore.setState({ appModeRequiresRestart: true })
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+
+    expect(screen.getByText('The storage change has been saved. Restart the app for the new data directory to take effect.')).toBeInTheDocument()
+  })
+
+  it('previews UI zoom while dragging and applies it once on release', async () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    expect(screen.getByText('Shortcuts are faster:')).toBeInTheDocument()
+    expect(screen.getByText('macOS')).toBeInTheDocument()
+    expect(screen.getByText('Windows / Linux')).toBeInTheDocument()
+    expect(screen.getByText('0 resets zoom to 100%.')).toBeInTheDocument()
+
+    const slider = screen.getByLabelText('UI Zoom')
+    expect(slider).toHaveAttribute('step', '0.01')
+
+    fireEvent.pointerDown(slider, { pointerId: 1 })
+    await act(async () => {
+      fireEvent.change(slider, {
+        target: { value: '1.25', valueAsNumber: 1.25 },
+      })
+    })
+
+    expect(screen.getAllByText('125%')).toHaveLength(2)
+    expect(useSettingsStore.getState().setUiZoom).not.toHaveBeenCalledWith(1.25)
+    expect(useSettingsStore.getState().uiZoom).toBe(1)
+    expect(slider).toHaveValue('1.25')
+    expect(slider).toHaveClass('settings-zoom-range')
+    expect(slider.closest('.settings-zoom-control')).toHaveClass('is-dragging')
+    expect(slider.closest('.settings-zoom-control')).toHaveStyle({ '--settings-zoom-range-progress': '50%' })
+
+    await act(async () => {
+      fireEvent.pointerUp(slider, { pointerId: 1 })
+    })
+
+    expect(useSettingsStore.getState().setUiZoom).toHaveBeenCalledWith(1.25)
+    expect(slider.closest('.settings-zoom-control')).not.toHaveClass('is-dragging')
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reset UI zoom to 100%' }))
+    })
+
+    expect(useSettingsStore.getState().setUiZoom).toHaveBeenLastCalledWith(1)
+  })
+
+  it('updates the UI zoom slider when shortcut zoom changes the shared setting while Settings is open', async () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+
+    const slider = screen.getByLabelText('UI Zoom')
+
+    await act(async () => {
+      useSettingsStore.setState({ uiZoom: 1.1 })
+    })
+
+    expect(slider).toHaveValue('1.1')
+    expect(screen.getAllByText('110%')).toHaveLength(2)
+    expect(slider.closest('.settings-zoom-control')).toHaveStyle({ '--settings-zoom-range-progress': '40%' })
   })
 
   it('opens the Token usage tab from Settings navigation above Diagnostics', () => {
@@ -422,6 +712,10 @@ describe('Settings > General tab', () => {
     expect(clipboardMock.copyTextToClipboard).toHaveBeenCalledWith(
       'http://192.168.0.102:3456/?serverUrl=http%3A%2F%2F192.168.0.102%3A3456&h5Token=h5_default_generated_token',
     )
+    expect(useUIStore.getState().toasts[useUIStore.getState().toasts.length - 1]).toMatchObject({
+      type: 'success',
+      message: 'QR link copied.',
+    })
   })
 
   it('guides enabled H5 users to generate a token before the QR code exists', async () => {
@@ -493,6 +787,10 @@ describe('Settings > General tab', () => {
     })
 
     expect(clipboardMock.copyTextToClipboard).toHaveBeenCalledWith('https://phone.example/app')
+    expect(useUIStore.getState().toasts[useUIStore.getState().toasts.length - 1]).toMatchObject({
+      type: 'success',
+      message: 'H5 URL copied.',
+    })
   })
 
   it('shows the H5-specific store error when the H5 settings load failed', () => {
@@ -580,6 +878,10 @@ describe('Settings > Providers tab', () => {
     MOCK_DELETE_PROVIDER.mockReset()
     MOCK_GET_SETTINGS.mockResolvedValue({})
     MOCK_UPDATE_SETTINGS.mockResolvedValue({})
+    useSettingsStore.setState({
+      locale: 'en',
+      fetchAll: vi.fn().mockResolvedValue(undefined),
+    })
     providerStoreState.providers = [
       {
         id: 'provider-1',
@@ -674,6 +976,58 @@ describe('Settings > Providers tab', () => {
     expect(within(dialog).getByText('Requests will be translated via the local proxy')).toBeInTheDocument()
   })
 
+  it('normalizes blank model mappings to the main model when saving a provider', async () => {
+    providerStoreState.createProvider = vi.fn().mockResolvedValue({
+      id: 'provider-new',
+      presetId: 'custom',
+      name: 'Custom',
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.example.com/anthropic',
+      apiFormat: 'anthropic',
+      models: {
+        main: 'gpt-5.5',
+        haiku: 'gpt-5.5',
+        sonnet: 'gpt-5.5',
+        opus: 'gpt-5.5',
+      },
+    })
+    providerStoreState.presets = [
+      {
+        id: 'custom',
+        name: 'Custom',
+        baseUrl: 'https://api.example.com/anthropic',
+        apiFormat: 'anthropic',
+        defaultModels: {
+          main: '',
+          haiku: '',
+          sonnet: '',
+          opus: '',
+        },
+        needsApiKey: true,
+        websiteUrl: '',
+      },
+    ]
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Add Provider|添加服务商/i }))
+    const dialog = screen.getByRole('dialog')
+    fireEvent.change(within(dialog).getByPlaceholderText('sk-...'), { target: { value: 'sk-test' } })
+    fireEvent.change(within(dialog).getByLabelText(/Main Model|主模型/i), { target: { value: 'gpt-5.5' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: /Save|Add|保存|添加/i }))
+
+    await waitFor(() => {
+      expect(providerStoreState.createProvider).toHaveBeenCalledWith(expect.objectContaining({
+        models: {
+          main: 'gpt-5.5',
+          haiku: 'gpt-5.5',
+          sonnet: 'gpt-5.5',
+          opus: 'gpt-5.5',
+        },
+      }))
+    })
+  })
+
   it('hides the API key by default and reveals it from the eye button', () => {
     providerStoreState.presets = [
       {
@@ -711,6 +1065,13 @@ describe('Settings > Providers tab', () => {
 describe('Settings > About tab', () => {
   beforeEach(() => {
     useUIStore.setState({ pendingSettingsTab: 'about' })
+    useSettingsStore.setState({
+      locale: 'en',
+      updateProxy: { mode: 'system', url: '' },
+      setUpdateProxy: vi.fn().mockImplementation(async (next: UpdateProxySettings) => {
+        useSettingsStore.setState({ updateProxy: next })
+      }),
+    })
     useUpdateStore.setState({
       status: 'available',
       availableVersion: '0.1.5',
@@ -757,5 +1118,58 @@ describe('Settings > About tab', () => {
 
     expect(await screen.findByText('Downloading update... 1.5 KB downloaded')).toBeInTheDocument()
     expect(screen.queryByText('Downloading update... 0%')).not.toBeInTheDocument()
+  })
+
+  it('saves a manual update proxy from the advanced update controls', async () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Advanced update proxy/i }))
+    expect(screen.getByRole('button', { name: /System proxy/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('This only affects app update checks and downloads.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Manual proxy/i }))
+    const proxyInput = screen.getByLabelText('Proxy URL')
+    const saveButton = screen.getByRole('button', { name: 'Save' })
+
+    expect(screen.getByText('Enter a proxy URL.')).toBeInTheDocument()
+    expect(saveButton).toBeDisabled()
+
+    fireEvent.change(proxyInput, { target: { value: 'socks5://127.0.0.1:7890' } })
+    expect(screen.getByText('Enter an HTTP or HTTPS proxy URL.')).toBeInTheDocument()
+    expect(saveButton).toBeDisabled()
+
+    fireEvent.change(proxyInput, { target: { value: '  http://127.0.0.1:7890  ' } })
+    expect(screen.getByText('HTTP and HTTPS proxy URLs are supported, for example http://127.0.0.1:7890.')).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.click(saveButton)
+    })
+
+    expect(useSettingsStore.getState().setUpdateProxy).toHaveBeenCalledWith({
+      mode: 'manual',
+      url: 'http://127.0.0.1:7890',
+    })
+  })
+
+  it('can switch update proxy settings back to system mode', async () => {
+    useSettingsStore.setState({
+      updateProxy: { mode: 'manual', url: 'http://127.0.0.1:7890' },
+    })
+    render(<Settings />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Advanced update proxy/i }))
+    expect(screen.getByRole('button', { name: /Manual proxy/i })).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: /System proxy/i }))
+    const saveButton = screen.getByRole('button', { name: 'Save' })
+
+    await act(async () => {
+      fireEvent.click(saveButton)
+    })
+
+    expect(useSettingsStore.getState().setUpdateProxy).toHaveBeenCalledWith({
+      mode: 'system',
+      url: 'http://127.0.0.1:7890',
+    })
   })
 })

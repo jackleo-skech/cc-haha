@@ -219,14 +219,10 @@ export function EmptySession() {
       }
       setInput('')
       setAttachments([])
-      setFileSearchOpen(false)
-      setSlashMenuOpen(false)
-      setPlusMenuOpen(false)
-      setLocalSlashPanel(null)
     } catch (error) {
       addToast({
         type: 'error',
-        message: error instanceof Error ? error.message : t('empty.failedToCreate'),
+        message: error instanceof Error ? error.message : 'Failed to create session',
       })
     } finally {
       setIsCreatingSession(false)
@@ -234,13 +230,9 @@ export function EmptySession() {
   }
 
   const filteredCommands = useMemo(() => {
-    const source = allSlashCommands
-    if (!slashFilter) return source
-    const lower = slashFilter.toLowerCase()
-    return source.filter((command) => (
-      command.name.toLowerCase().includes(lower) ||
-      command.description.toLowerCase().includes(lower)
-    ))
+    return allSlashCommands.filter((command) =>
+      slashFilter ? command.name.toLowerCase().includes(slashFilter.toLowerCase()) : true,
+    )
   }, [allSlashCommands, slashFilter])
 
   const exactSlashCommand = useMemo(() => {
@@ -248,6 +240,10 @@ export function EmptySession() {
     if (!normalized) return null
     return filteredCommands.find((command) => command.name.toLowerCase() === normalized) ?? null
   }, [filteredCommands, slashFilter])
+  const canSubmit = (
+    input.trim().length > 0 ||
+    attachments.length > 0
+  ) && !isSubmitting && !isCreatingSession
 
   useEffect(() => {
     setSlashSelectedIndex(0)
@@ -262,7 +258,7 @@ export function EmptySession() {
 
   const handleSubmit = async () => {
     const text = input.trim()
-    if ((!text && attachments.length === 0) || isSubmitting) return
+    if (!canSubmit) return
 
     const slashUiAction = text.startsWith('/') ? resolveSlashUiAction(text.slice(1)) : null
     if (slashUiAction?.type === 'panel') {
@@ -286,10 +282,12 @@ export function EmptySession() {
 
     setIsSubmitting(true)
     try {
-      const draftSelection = await resolveDraftRuntimeSelection()
+      const explicitDraftSelection = useSessionRuntimeStore.getState().selections[DRAFT_RUNTIME_SELECTION_KEY]
       const sessionId = await createSession(workDir || undefined)
-      useSessionRuntimeStore.getState().setSelection(sessionId, draftSelection)
-      useSessionRuntimeStore.getState().clearSelection(DRAFT_RUNTIME_SELECTION_KEY)
+      if (explicitDraftSelection) {
+        useSessionRuntimeStore.getState().setSelection(sessionId, explicitDraftSelection)
+        useSessionRuntimeStore.getState().clearSelection(DRAFT_RUNTIME_SELECTION_KEY)
+      }
       setActiveView('code')
       useTabStore.getState().openTab(sessionId, 'New Session')
       connectToSession(sessionId)
@@ -300,13 +298,15 @@ export function EmptySession() {
         data: attachment.data,
         mimeType: attachment.mimeType,
       }))
-      sendMessage(sessionId, text, attachmentPayload)
+      if (text || attachmentPayload.length > 0) {
+        sendMessage(sessionId, text, attachmentPayload)
+      }
       setInput('')
       setAttachments([])
     } catch (error) {
       addToast({
         type: 'error',
-        message: error instanceof Error ? error.message : t('empty.failedToCreate'),
+        message: error instanceof Error ? error.message : 'Failed to create session',
       })
     } finally {
       setIsSubmitting(false)
@@ -323,6 +323,7 @@ export function EmptySession() {
       setSlashMenuOpen(true)
     }
 
+    // Detect @ trigger for file search
     const textBeforeCursor = value.slice(0, cursorPos)
     let pos = -1
     for (let i = textBeforeCursor.length - 1; i >= 0; i--) {
@@ -351,8 +352,10 @@ export function EmptySession() {
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
+    // Ignore key events during IME composition (e.g. Chinese input method)
     if (event.nativeEvent.isComposing) return
 
+    // Route file search navigation keys to FileSearchMenu
     if (fileSearchOpen) {
       const key = event.key
       if (key === 'ArrowDown' || key === 'ArrowUp' || key === 'Enter' || key === 'Tab' || key === 'Escape') {
@@ -457,15 +460,13 @@ export function EmptySession() {
             id,
             name: file.name,
             type: isImage ? 'image' : 'file',
-            mimeType: file.type || undefined,
-            previewUrl: isImage ? (reader.result as string) : undefined,
-            data: reader.result as string,
+            mimeType: file.type,
+            ...(isImage ? { data: reader.result as string } : {}),
           },
         ])
       }
       reader.readAsDataURL(file)
     })
-
     event.target.value = ''
   }
 

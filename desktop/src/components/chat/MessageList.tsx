@@ -1,9 +1,10 @@
-import { useRef, useEffect, useMemo, memo, useState, useCallback, useLayoutEffect } from 'react'
-import { ArrowDown } from 'lucide-react'
+import { useRef, useEffect, useMemo, memo, useState, useCallback, useLayoutEffect, type ReactNode } from 'react'
+import { ArrowDown, BookMarked, Bot, CheckCircle2, ChevronDown, ChevronRight, CircleStop, LoaderCircle, MessageCircle, Settings, Target, XCircle } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import { sessionsApi, type SessionRewindResponse, type SessionTurnCheckpoint } from '../../api/sessions'
 import { useChatStore } from '../../stores/chatStore'
-import { useTabStore } from '../../stores/tabStore'
+import { useWorkspaceChatContextStore } from '../../stores/workspaceChatContextStore'
+import { SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
 import { useTeamStore } from '../../stores/teamStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useTranslation } from '../../i18n'
@@ -23,9 +24,13 @@ import type { AgentTaskNotification, UIAttachment, UIMessage } from '../../types
 import { ConfirmDialog } from '../shared/ConfirmDialog'
 import { Modal } from '../shared/Modal'
 import { Button } from '../shared/Button'
+import { clearWindowSelection, getSelectionPopoverPosition, useSelectionPopoverDismiss } from '../../hooks/useSelectionPopoverDismiss'
 
 type ToolCall = Extract<UIMessage, { type: 'tool_use' }>
 type ToolResult = Extract<UIMessage, { type: 'tool_result' }>
+type MemoryEvent = Extract<UIMessage, { type: 'memory_event' }>
+type GoalEvent = Extract<UIMessage, { type: 'goal_event' }>
+type BackgroundTaskEvent = Extract<UIMessage, { type: 'background_task' }>
 
 type RenderItem =
   | { kind: 'tool_group'; toolCalls: ToolCall[]; id: string }
@@ -50,6 +55,304 @@ type TurnChangeCardModel = {
   checkpoint: SessionTurnCheckpoint
   workDir: string | null
   isLatest: boolean
+}
+
+type ChatMessageRole = 'user' | 'assistant'
+
+type ChatSelectionState = {
+  text: string
+  x: number
+  y: number
+}
+
+const CHAT_SELECTION_MENU_OFFSET = 10
+const CHAT_SELECTION_MENU_WIDTH = 158
+const CHAT_SELECTION_MENU_HEIGHT = 44
+
+function getElementForNode(node: Node | null): Element | null {
+  if (!node) return null
+  return node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement
+}
+
+function getChatSelectionPosition(range: Range, root: HTMLElement, pointer: { clientX: number; clientY: number }) {
+  return getSelectionPopoverPosition(range, root, {
+    menuWidth: CHAT_SELECTION_MENU_WIDTH,
+    menuHeight: CHAT_SELECTION_MENU_HEIGHT,
+    offset: CHAT_SELECTION_MENU_OFFSET,
+    fallbackPointer: pointer,
+  })
+}
+
+function getChatSelectionFromContainer(
+  root: HTMLElement | null,
+  pointer: { clientX: number; clientY: number },
+): ChatSelectionState | null {
+  if (!root) return null
+  const selection = window.getSelection()
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null
+
+  const range = selection.getRangeAt(0)
+  const startElement = getElementForNode(range.startContainer)
+  const endElement = getElementForNode(range.endContainer)
+  if (!startElement || !endElement || !root.contains(startElement) || !root.contains(endElement)) {
+    return null
+  }
+
+  const text = selection.toString().trim()
+  if (!text) return null
+
+  return {
+    ...getChatSelectionPosition(range, root, pointer),
+    text,
+  }
+}
+
+function ChatSelectionMenu({
+  selection,
+  onAdd,
+  popoverRef,
+}: {
+  selection: ChatSelectionState | null
+  onAdd: () => void
+  popoverRef: { current: HTMLButtonElement | null }
+}) {
+  const t = useTranslation()
+  if (!selection) return null
+
+  return (
+    <button
+      ref={popoverRef}
+      type="button"
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onAdd}
+      className="fixed z-50 inline-flex h-11 items-center gap-2 rounded-full border border-[var(--color-border)]/70 bg-[var(--color-surface-container-lowest)] px-5 text-[15px] font-semibold text-[var(--color-text-primary)] shadow-[0_10px_28px_rgba(15,23,42,0.14),0_2px_8px_rgba(15,23,42,0.08)] transition-colors hover:bg-[var(--color-surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/35"
+      style={{ left: selection.x, top: selection.y }}
+    >
+      <MessageCircle size={21} strokeWidth={2.15} className="shrink-0 text-[var(--color-text-primary)]" aria-hidden="true" />
+      <span>{t('chat.addSelectionToChat')}</span>
+    </button>
+  )
+}
+
+function GoalEventCard({ message }: { message: GoalEvent }) {
+  const t = useTranslation()
+  const [expanded, setExpanded] = useState(true)
+  const titleKey = `chat.goalEvent.${message.action === 'status' ? 'statusTitle' : message.action}` as TranslationKey
+  const title = t(titleKey) === titleKey ? t('chat.goalEvent.message') : t(titleKey)
+  const metaDetails = [
+    message.status ? t('chat.goalEvent.statusValue', { value: message.status }) : null,
+    message.budget ? t('chat.goalEvent.budget', { value: message.budget }) : null,
+    message.continuations ? t('chat.goalEvent.continuations', { value: message.continuations }) : null,
+  ].filter((detail): detail is string => detail !== null)
+
+  return (
+    <div className="mb-2">
+      <div
+        data-testid="goal-event-card"
+        className="overflow-hidden rounded-lg border border-[var(--color-memory-border)] bg-[var(--color-memory-surface)]"
+      >
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[var(--color-surface-hover)]/50"
+        >
+          {expanded ? (
+            <ChevronDown size={15} className="shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+          ) : (
+            <ChevronRight size={15} className="shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+          )}
+          <Target size={15} className="shrink-0 text-[var(--color-memory-accent)]" strokeWidth={2.25} aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--color-text-primary)]">
+            {title}
+          </span>
+          {message.status ? (
+            <span className="inline-flex shrink-0 items-center gap-1 text-[12px] text-[var(--color-text-tertiary)]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-memory-accent)]" aria-hidden="true" />
+              {message.status}
+            </span>
+          ) : null}
+        </button>
+
+        {expanded ? (
+          <div className="border-t border-[var(--color-border)]/55 px-3 py-2.5">
+            <div className="space-y-1.5">
+              {message.objective ? (
+                <div className="line-clamp-2 rounded-md px-2 py-1 text-[12px] leading-5 text-[var(--color-text-secondary)]">
+                  {t('chat.goalEvent.objective', { value: message.objective })}
+                </div>
+              ) : message.message ? (
+                <div className="whitespace-pre-wrap rounded-md px-2 py-1 text-[12px] leading-5 text-[var(--color-text-secondary)]">
+                  {message.message}
+                </div>
+              ) : null}
+              {metaDetails.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 px-2 pt-0.5">
+                  {metaDetails.map((detail) => (
+                    <span
+                      key={detail}
+                      className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--color-text-secondary)]"
+                    >
+                      {detail}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function formatBackgroundTaskDuration(durationMs?: number) {
+  if (typeof durationMs !== 'number' || durationMs < 0) return null
+  const seconds = Math.round(durationMs / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m ${seconds % 60}s`
+}
+
+function BackgroundTaskEventCard({ message }: { message: BackgroundTaskEvent }) {
+  const t = useTranslation()
+  const { task } = message
+  const isRunning = task.status === 'running'
+  const isFailed = task.status === 'failed'
+  const isStopped = task.status === 'stopped'
+  const duration = formatBackgroundTaskDuration(task.usage?.durationMs)
+  const detail = task.summary || task.lastToolName || task.description || task.outputFile || task.taskId
+  const label = getBackgroundTaskLabel(task.taskType, t)
+
+  return (
+    <div className="mb-2">
+      <div
+        data-testid="background-task-event-card"
+        data-status={task.status}
+        className="flex min-w-0 items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 py-2"
+      >
+        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
+          {isRunning ? (
+            <LoaderCircle size={15} strokeWidth={2.25} className="animate-spin text-[var(--color-accent)]" aria-hidden="true" />
+          ) : isFailed ? (
+            <XCircle size={15} strokeWidth={2.25} className="text-[var(--color-error)]" aria-hidden="true" />
+          ) : isStopped ? (
+            <CircleStop size={15} strokeWidth={2.25} className="text-[var(--color-text-tertiary)]" aria-hidden="true" />
+          ) : (
+            <CheckCircle2 size={15} strokeWidth={2.25} className="text-[var(--color-success)]" aria-hidden="true" />
+          )}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <Bot size={14} strokeWidth={2.25} className="shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+            <span className="shrink-0 text-[12px] font-medium text-[var(--color-text-primary)]">
+              {label}
+            </span>
+            <span className="shrink-0 text-[11px] text-[var(--color-text-tertiary)]">
+              {t(`chat.backgroundAgents.status.${task.status}`)}
+            </span>
+            {task.usage?.totalTokens ? (
+              <span className="hidden shrink-0 text-[11px] text-[var(--color-text-tertiary)] sm:inline">
+                {t('chat.backgroundAgents.tokens', { count: task.usage.totalTokens.toLocaleString() })}
+              </span>
+            ) : null}
+            {duration ? (
+              <span className="hidden shrink-0 text-[11px] text-[var(--color-text-tertiary)] sm:inline">
+                {duration}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-0.5 truncate text-[12px] leading-5 text-[var(--color-text-secondary)]">
+            {detail}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function isAgentBackgroundTaskMessage(message: UIMessage): boolean {
+  if (message.type !== 'background_task') return false
+  if (message.task.taskType === 'local_agent' || message.task.taskType === 'remote_agent') {
+    return true
+  }
+  return /^Agent (?:(?:"[^"]+" )?(completed|was stopped)|(?:"[^"]+" )?failed(?::|$))/.test(
+    message.task.summary ?? '',
+  )
+}
+
+function getBackgroundTaskLabel(
+  taskType: string | undefined,
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+): string {
+  if (taskType === 'local_bash') return t('chat.backgroundTasks.command')
+  if (taskType === 'local_workflow') return t('chat.backgroundTasks.workflow')
+  return t('chat.backgroundTasks.task')
+}
+
+function SelectableChatMessage({
+  sessionId,
+  messageId,
+  role,
+  content,
+  children,
+}: {
+  sessionId?: string | null
+  messageId: string
+  role: ChatMessageRole
+  content: string
+  children: ReactNode
+}) {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const selectionMenuRef = useRef<HTMLButtonElement>(null)
+  const addReference = useWorkspaceChatContextStore((state) => state.addReference)
+  const [selectionMenu, setSelectionMenu] = useState<ChatSelectionState | null>(null)
+  const t = useTranslation()
+  const sourceName = role === 'assistant'
+    ? t('chat.assistantMessageReference')
+    : t('chat.userMessageReference')
+
+  useEffect(() => {
+    setSelectionMenu(null)
+  }, [content, messageId])
+
+  const dismissSelectionMenu = useCallback(() => {
+    setSelectionMenu(null)
+  }, [])
+
+  useSelectionPopoverDismiss({
+    active: Boolean(selectionMenu),
+    popoverRef: selectionMenuRef,
+    onDismiss: dismissSelectionMenu,
+  })
+
+  const addCurrentSelectionToChat = useCallback(() => {
+    if (!sessionId || !selectionMenu) return
+    addReference(sessionId, {
+      kind: 'chat-selection',
+      path: `chat://${role}/${messageId}`,
+      name: sourceName,
+      quote: selectionMenu.text,
+      sourceRole: role,
+      messageId,
+    })
+    setSelectionMenu(null)
+    clearWindowSelection()
+  }, [addReference, messageId, role, selectionMenu, sessionId, sourceName])
+
+  return (
+    <div
+      ref={rootRef}
+      onMouseUp={(event) => {
+        setSelectionMenu(getChatSelectionFromContainer(rootRef.current, event))
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') setSelectionMenu(null)
+      }}
+    >
+      {children}
+      <ChatSelectionMenu selection={selectionMenu} onAdd={addCurrentSelectionToChat} popoverRef={selectionMenuRef} />
+    </div>
+  )
 }
 
 function appendChildToolCall(
@@ -82,6 +385,15 @@ export function buildRenderModel(messages: UIMessage[]): RenderModel {
       pendingToolCalls = []
     }
   }
+  const appendRootToolCall = (toolCall: ToolCall) => {
+    const nextIsAgent = toolCall.toolName === 'Agent'
+    const pendingIsAgentGroup = pendingToolCalls.every((pendingToolCall) => pendingToolCall.toolName === 'Agent')
+
+    if (pendingToolCalls.length > 0 && pendingIsAgentGroup !== nextIsAgent) {
+      flushGroup()
+    }
+    pendingToolCalls.push(toolCall)
+  }
 
   for (const msg of messages) {
     if (msg.type === 'tool_use') {
@@ -94,6 +406,9 @@ export function buildRenderModel(messages: UIMessage[]): RenderModel {
 
   for (const msg of messages) {
     if (msg.type === 'assistant_text' && !msg.content.trim()) {
+      continue
+    }
+    if (isAgentBackgroundTaskMessage(msg)) {
       continue
     }
 
@@ -114,7 +429,7 @@ export function buildRenderModel(messages: UIMessage[]): RenderModel {
         flushGroup()
         items.push({ kind: 'message', message: msg })
       } else {
-        pendingToolCalls.push(msg)
+        appendRootToolCall(msg)
       }
     } else {
       flushGroup()
@@ -131,6 +446,7 @@ function isTurnResponseMessage(message: UIMessage) {
     message.type === 'assistant_text' ||
     message.type === 'tool_use' ||
     message.type === 'tool_result' ||
+    (message.type === 'background_task' && !isAgentBackgroundTaskMessage(message)) ||
     message.type === 'error' ||
     message.type === 'task_summary'
   )
@@ -243,6 +559,70 @@ function normalizeTurnCheckpoints(response: unknown): SessionTurnCheckpoint[] {
   return checkpoints.filter(isSessionTurnCheckpoint)
 }
 
+function memoryFileLabel(path: string) {
+  const normalized = path.replace(/\\/g, '/')
+  return normalized.split('/').pop() || normalized
+}
+
+function openMemorySettings(path?: string) {
+  const ui = useUIStore.getState()
+  if (path) ui.setPendingMemoryPath(path)
+  ui.setPendingSettingsTab('memory')
+  useTabStore.getState().openTab(SETTINGS_TAB_ID, 'Settings', 'settings')
+}
+
+function MemoryEventCard({ message }: { message: MemoryEvent }) {
+  const t = useTranslation()
+  const visibleFiles = message.files.slice(0, 3)
+  const hiddenCount = Math.max(0, message.files.length - visibleFiles.length)
+
+  return (
+    <div className="mb-3 flex justify-center px-3">
+      <div className="w-full max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3.5 py-3 text-xs shadow-sm">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-brand)]">
+            <BookMarked size={15} aria-hidden="true" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-medium text-[var(--color-text-primary)]">
+                {t('chat.memorySavedTitle', { count: message.files.length })}
+              </div>
+              <button
+                type="button"
+                onClick={() => openMemorySettings(message.files[0]?.path)}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-brand)]/50 hover:text-[var(--color-text-primary)]"
+              >
+                <Settings size={13} aria-hidden="true" />
+                {t('chat.memoryOpenSettings')}
+              </button>
+            </div>
+            {message.message ? (
+              <div className="mt-1 text-[var(--color-text-tertiary)]">{message.message}</div>
+            ) : null}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {visibleFiles.map((file) => (
+                <span
+                  key={file.path}
+                  title={file.path}
+                  className="max-w-full truncate rounded-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-mono text-[10px] text-[var(--color-text-secondary)]"
+                >
+                  {memoryFileLabel(file.path)}
+                </span>
+              ))}
+              {hiddenCount > 0 ? (
+                <span className="rounded-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-mono text-[10px] text-[var(--color-text-tertiary)]">
+                  {t('chat.memoryMoreFiles', { count: hiddenCount })}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 type MessageListProps = {
   sessionId?: string | null
   compact?: boolean
@@ -294,7 +674,11 @@ function rememberSessionScroll(sessionId: string, element: HTMLElement) {
 }
 
 function clampScrollTop(element: HTMLElement, scrollTop: number) {
-  return Math.max(0, Math.min(scrollTop, element.scrollHeight - element.clientHeight))
+  return Math.max(0, Math.min(scrollTop, getBottomScrollTop(element)))
+}
+
+function getBottomScrollTop(element: HTMLElement) {
+  return Math.max(0, element.scrollHeight - element.clientHeight)
 }
 
 export function MessageList({ sessionId, compact = false }: MessageListProps = {}) {
@@ -315,11 +699,17 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const streamingText = sessionState?.streamingText ?? ''
   const activeThinkingId = sessionState?.activeThinkingId ?? null
   const agentTaskNotifications = sessionState?.agentTaskNotifications ?? {}
+  const shouldFollowContentResize =
+    streamingText.trim().length > 0 ||
+    chatState === 'streaming' ||
+    chatState === 'tool_executing' ||
+    (chatState === 'thinking' && Boolean(activeThinkingId))
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollContentRef = useRef<HTMLDivElement>(null)
   const shouldAutoScrollRef = useRef(true)
   const isProgrammaticScrollingRef = useRef(false)
   const lastSessionIdRef = useRef<string | null | undefined>(resolvedSessionId)
+  const lastTailMessageIdBySessionRef = useRef(new Map<string, string | null>())
   const t = useTranslation()
   const [turnChangeCards, setTurnChangeCards] = useState<TurnChangeCardModel[]>([])
   const [turnChangeLoadError, setTurnChangeLoadError] = useState<string | null>(null)
@@ -341,17 +731,46 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
     shouldAutoScrollRef.current = true
     isProgrammaticScrollingRef.current = true
-    bottomRef.current?.scrollIntoView?.({ behavior, block: 'end' })
     const container = scrollContainerRef.current
+    const targetScrollTop = container ? getBottomScrollTop(container) : null
+    if (container) {
+      const nextScrollTop = targetScrollTop ?? 0
+      if (typeof container.scrollTo === 'function') {
+        try {
+          container.scrollTo({ top: nextScrollTop, behavior })
+        } catch {
+          container.scrollTo(0, nextScrollTop)
+        }
+      }
+      container.scrollTop = nextScrollTop
+    }
     if (container && resolvedSessionId) {
       sessionScrollSnapshots.set(resolvedSessionId, {
-        scrollTop: Math.max(0, container.scrollHeight - container.clientHeight),
+        scrollTop: getBottomScrollTop(container),
         wasAtBottom: true,
       })
     }
     setShowJumpToLatest(false)
     // Reset flag after the scroll event(s) from scrollIntoView have fired
     requestAnimationFrame(() => {
+      const latestContainer = scrollContainerRef.current
+      if (
+        shouldAutoScrollRef.current &&
+        latestContainer &&
+        (
+          targetScrollTop === null ||
+          latestContainer.scrollTop === targetScrollTop ||
+          isNearScrollBottom(latestContainer)
+        )
+      ) {
+        latestContainer.scrollTop = getBottomScrollTop(latestContainer)
+        if (resolvedSessionId) {
+          sessionScrollSnapshots.set(resolvedSessionId, {
+            scrollTop: getBottomScrollTop(latestContainer),
+            wasAtBottom: true,
+          })
+        }
+      }
       isProgrammaticScrollingRef.current = false
     })
   }, [resolvedSessionId])
@@ -387,18 +806,48 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
     }
   }, [resolvedSessionId, scrollToBottom])
 
+  const tailMessage = messages[messages.length - 1] ?? null
+  const tailMessageId = tailMessage?.id ?? null
+  const tailMessageType = tailMessage?.type ?? null
+
+  useEffect(() => {
+    if (!resolvedSessionId) return
+
+    const previousTailMessageId = lastTailMessageIdBySessionRef.current.get(resolvedSessionId)
+    lastTailMessageIdBySessionRef.current.set(resolvedSessionId, tailMessageId)
+    if (previousTailMessageId === undefined || previousTailMessageId === tailMessageId) return
+
+    if (tailMessageType === 'user_text') {
+      scrollToBottom('auto')
+    }
+  }, [resolvedSessionId, scrollToBottom, tailMessageId, tailMessageType])
+
   useEffect(() => {
     if (!shouldAutoScrollRef.current) {
       setShowJumpToLatest(true)
       return
     }
 
-    scrollToBottom('smooth')
+    scrollToBottom('auto')
   }, [messages.length, resolvedSessionId, scrollToBottom, streamingText])
 
   const handleJumpToLatest = useCallback(() => {
-    scrollToBottom('smooth')
+    scrollToBottom('auto')
   }, [scrollToBottom])
+
+  useEffect(() => {
+    const content = scrollContentRef.current
+    if (!content || typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver(() => {
+      if (!shouldFollowContentResize) return
+      if (!shouldAutoScrollRef.current) return
+      scrollToBottom('auto')
+    })
+    observer.observe(content)
+
+    return () => observer.disconnect()
+  }, [scrollToBottom, shouldFollowContentResize])
 
   const { toolResultMap, childToolCallsByParent, renderItems } = useMemo(
     () => buildRenderModel(messages),
@@ -660,12 +1109,16 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
         onScroll={updateAutoScrollState}
         className={`${CHAT_SCROLL_AREA_CLASS} h-full overflow-y-auto ${compact ? 'px-3 py-3 pb-5' : 'px-4 py-4'}`}
       >
-        <div className={compact ? 'mx-auto max-w-full' : 'mx-auto max-w-[960px]'}>
+        <div
+          ref={scrollContentRef}
+          className={compact ? 'mx-auto max-w-full' : 'mx-auto max-w-[960px]'}
+        >
           {renderItems.map((item, index) => {
+            const itemKey = item.kind === 'tool_group' ? item.id : item.message.id
             const cardsForItem = turnCardsByRenderIndex.get(index) ?? []
 
             return (
-              <div key={item.kind === 'tool_group' ? item.id : item.message.id}>
+              <div key={itemKey}>
                 {item.kind === 'tool_group' ? (
                   <ToolCallGroup
                     toolCalls={item.toolCalls}
@@ -738,7 +1191,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
             </div>
           )}
 
-          <div ref={bottomRef} />
+          <div />
         </div>
       </div>
 
@@ -888,19 +1341,35 @@ export const MessageBlock = memo(function MessageBlock({
   switch (message.type) {
     case 'user_text':
       return (
-        <UserMessage
+        <SelectableChatMessage
+          sessionId={sessionId}
+          messageId={message.id}
+          role="user"
           content={message.content}
-          attachments={message.attachments}
-          onRewind={
-            !isMemberSession && !message.pending && onRequestRewind
-              ? () => onRequestRewind(message)
-              : undefined
-          }
-          rewindLabel={t('chat.rewindAction')}
-        />
+        >
+          <UserMessage
+            content={message.content}
+            attachments={message.attachments}
+            onRewind={
+              !isMemberSession && !message.pending && onRequestRewind
+                ? () => onRequestRewind(message)
+                : undefined
+            }
+            rewindLabel={t('chat.rewindAction')}
+          />
+        </SelectableChatMessage>
       )
     case 'assistant_text':
-      return <AssistantMessage content={message.content} sessionId={sessionId} translatedContent={message.translatedContent} />
+      return (
+        <SelectableChatMessage
+          sessionId={sessionId}
+          messageId={message.id}
+          role="assistant"
+          content={message.content}
+        >
+          <AssistantMessage content={message.content} sessionId={sessionId} translatedContent={message.translatedContent} />
+        </SelectableChatMessage>
+      )
     case 'thinking':
       return <ThinkingBlock content={message.content} isActive={message.id === activeThinkingId} />
     case 'tool_use':
@@ -965,6 +1434,12 @@ export const MessageBlock = memo(function MessageBlock({
     }
     case 'task_summary':
       return <InlineTaskSummary tasks={message.tasks} />
+    case 'memory_event':
+      return <MemoryEventCard message={message} />
+    case 'goal_event':
+      return <GoalEventCard message={message} />
+    case 'background_task':
+      return <BackgroundTaskEventCard message={message} />
     case 'system':
       return (
         <div className="mb-3 text-center text-xs text-[var(--color-text-tertiary)]">

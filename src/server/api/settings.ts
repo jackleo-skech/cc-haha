@@ -14,6 +14,7 @@ import { SettingsService } from '../services/settingsService.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 import { ensureDesktopCliLauncherInstalled } from '../services/desktopCliLauncherService.js'
 import { ProviderService } from '../services/providerService.js'
+import { conversationService } from '../services/conversationService.js'
 
 const settingsService = new SettingsService()
 const providerService = new ProviderService()
@@ -76,6 +77,7 @@ async function handleUserSettings(req: Request): Promise<Response> {
   if (req.method === 'PUT') {
     const body = await parseJsonBody(req)
     await settingsService.updateUserSettings(body)
+    syncThinkingSettingToActiveSessions(body)
     return Response.json({ ok: true })
   }
 
@@ -139,4 +141,17 @@ async function handleMaxOutputTokens(req: Request): Promise<Response> {
   }
   await providerService.updateMaxOutputTokens(maxTokens)
   return Response.json({ ok: true, maxOutputTokens: maxTokens })
+}
+
+function syncThinkingSettingToActiveSessions(settings: Record<string, unknown>): void {
+  if (
+    !Object.prototype.hasOwnProperty.call(settings, 'alwaysThinkingEnabled') ||
+    typeof settings.alwaysThinkingEnabled !== 'boolean'
+  ) {
+    return
+  }
+
+  conversationService.setMaxThinkingTokensForActiveSessions(
+    settings.alwaysThinkingEnabled ? null : 0,
+  )
 }
