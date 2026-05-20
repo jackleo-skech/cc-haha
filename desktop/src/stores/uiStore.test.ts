@@ -28,7 +28,7 @@ describe('uiStore theme handling', () => {
     expect(document.documentElement.style.colorScheme).toBe('light')
   })
 
-  it('cycles through pure white, warm classic, and dark themes', async () => {
+  it('cycles through white, light, dark, and cool themes', async () => {
     const { useUIStore } = await import('./uiStore')
 
     useUIStore.getState().toggleTheme()
@@ -38,6 +38,10 @@ describe('uiStore theme handling', () => {
     useUIStore.getState().toggleTheme()
     expect(useUIStore.getState().theme).toBe('dark')
     expect(document.documentElement.style.colorScheme).toBe('dark')
+
+    useUIStore.getState().toggleTheme()
+    expect(useUIStore.getState().theme).toBe('cool')
+    expect(document.documentElement.style.colorScheme).toBe('light')
 
     useUIStore.getState().toggleTheme()
     expect(useUIStore.getState().theme).toBe('white')

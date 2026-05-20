@@ -167,11 +167,40 @@ function ProviderSettings() {
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<SavedProvider | null>(null)
   const [isDeletingProvider, setIsDeletingProvider] = useState(false)
   const [testResults, setTestResults] = useState<Record<string, { loading: boolean; result?: ProviderTestResult }>>({})
+  const [maxOutputTokens, setMaxOutputTokens] = useState(4096)
+  const [activeMaxOutputTokens, setActiveMaxOutputTokens] = useState(4096)
+  const [isSavingMaxTokens, setIsSavingMaxTokens] = useState(false)
+  const [saveMaxTokensSuccess, setSaveMaxTokensSuccess] = useState(false)
 
   useEffect(() => {
     void fetchProviders()
     void fetchPresets()
+    import('../api/providers').then(({ providersApi }) => {
+      providersApi.getSettings().then((settings) => {
+        const tokens = settings.max_output_tokens as number | undefined
+        if (tokens && tokens > 0) {
+          setMaxOutputTokens(tokens)
+          setActiveMaxOutputTokens(tokens)
+        }
+      }).catch(() => {})
+    })
   }, [fetchPresets, fetchProviders])
+
+  const handleSaveMaxTokens = async () => {
+    setIsSavingMaxTokens(true)
+    setSaveMaxTokensSuccess(false)
+    try {
+      const { providersApi } = await import('../api/providers')
+      const result = await providersApi.saveMaxOutputTokens(maxOutputTokens)
+      setActiveMaxOutputTokens(result.maxOutputTokens)
+      setSaveMaxTokensSuccess(true)
+      setTimeout(() => setSaveMaxTokensSuccess(false), 5000)
+    } catch (error) {
+      console.error('Failed to save max output tokens:', error)
+    } finally {
+      setIsSavingMaxTokens(false)
+    }
+  }
 
   const presetMap = useMemo(
     () => new Map(presets.map((preset) => [preset.id, preset])),
@@ -343,6 +372,41 @@ function ProviderSettings() {
       {editingProvider && (
         <ProviderFormModal key={editingProvider.id} open={true} onClose={() => setEditingProvider(null)} mode="edit" provider={editingProvider} presets={presets} />
       )}
+
+      {/* LLM Output Token Settings */}
+      <div className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+          {t('settings.general.maxOutputTokensTitle')}
+        </h3>
+        <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">
+          {t('settings.general.maxOutputTokensDesc')}
+        </p>
+        <div className="mt-4 flex items-center gap-3">
+          <input
+            type="number"
+            min={1}
+            max={32768}
+            value={maxOutputTokens}
+            onChange={(e) => setMaxOutputTokens(Number(e.target.value))}
+            className="w-32 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-brand)]"
+          />
+          <button
+            onClick={handleSaveMaxTokens}
+            disabled={isSavingMaxTokens}
+            className="rounded-md border border-[var(--color-brand)] bg-[var(--color-brand)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--color-brand)]/65 disabled:opacity-50"
+          >
+            {isSavingMaxTokens ? t('settings.general.saving') : t('common.save')}
+          </button>
+          {saveMaxTokensSuccess && (
+            <span className="text-xs text-green-600">
+              {t('settings.general.maxOutputTokensSaved')}
+            </span>
+          )}
+          <span className="ml-auto text-xs text-[var(--color-text-tertiary)]">
+            {t('settings.general.currentValue')}: {activeMaxOutputTokens}
+          </span>
+        </div>
+      </div>
 
       <ConfirmDialog
         open={pendingDeleteProvider !== null}
@@ -1114,6 +1178,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
             <Input label={t('settings.providers.haikuModel')} value={models.haiku} onChange={(e) => handleModelChange('haiku', e.target.value)} placeholder={t('settings.providers.sameAsMain')} />
             <Input label={t('settings.providers.sonnetModel')} value={models.sonnet} onChange={(e) => handleModelChange('sonnet', e.target.value)} placeholder={t('settings.providers.sameAsMain')} />
             <Input label={t('settings.providers.opusModel')} value={models.opus} onChange={(e) => handleModelChange('opus', e.target.value)} placeholder={t('settings.providers.sameAsMain')} />
+            <Input label={t('settings.providers.translateModel')} value={models.translate ?? ''} onChange={(e) => setModels(m => ({ ...m, translate: e.target.value }))} placeholder={t('settings.providers.sameAsMain')} />
           </div>
         </div>
 
@@ -1496,6 +1561,7 @@ function GeneralSettings() {
     { value: 'white', label: t('settings.general.appearance.white') },
     { value: 'light', label: t('settings.general.appearance.light') },
     { value: 'dark', label: t('settings.general.appearance.dark') },
+    { value: 'cool', label: t('settings.general.appearance.cool') },
   ]
 
   const WEB_SEARCH_MODES: Array<{ value: WebSearchMode; label: string }> = [
