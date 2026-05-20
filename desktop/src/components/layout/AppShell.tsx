@@ -12,6 +12,7 @@ import {
   isH5ConnectionRequiredError,
   isTauriRuntime,
 } from '../../lib/desktopRuntime'
+import { Header } from './Header'
 import { TabBar } from './TabBar'
 import { StartupErrorView } from './StartupErrorView'
 import { useTabStore, SETTINGS_TAB_ID } from '../../stores/tabStore'
@@ -268,6 +269,7 @@ export function AppShell() {
             ) : null}
           </div>
         ) : null}
+        {!isMobileShell ? <Header /> : null}
         {!isMobileShell ? <TabBar /> : null}
         <ContentRouter />
       </main>
