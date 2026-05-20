@@ -74,3 +74,14 @@ runtime/__pycache__
 
 # Codex logs
 .codex-logs/
+
+# Personal IDE / editor config
+.agents/
+.history/
+.obsidian/
+.trae/
+superpowers-main/
+
+# Personal docs / examples
+docs/jws/
+src/examples/
