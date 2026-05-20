@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { wsManager } from '../api/websocket'
 import { sessionsApi } from '../api/sessions'
+import { translateApi } from '../api/translate'
 import { useTeamStore } from './teamStore'
 import { useSessionStore } from './sessionStore'
 import { useCLITaskStore } from './cliTaskStore'
@@ -71,6 +72,7 @@ export type PerSessionState = {
     attachments?: UIAttachment[]
     nonce: number
   } | null
+  bilingualEnabled?: boolean
   composerDraft?: ComposerDraftState | null
 }
 
@@ -129,6 +131,7 @@ type ChatStore = {
   ) => void
   setSessionRuntime: (sessionId: string, selection: RuntimeSelection) => void
   setSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void
+  toggleBilingual: (sessionId: string) => void
   stopGeneration: (sessionId: string) => void
   loadHistory: (sessionId: string) => Promise<void>
   reloadHistory: (sessionId: string) => Promise<void>
@@ -648,6 +651,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   setSessionRuntime: (sessionId, selection) => {
+    console.debug('[chatStore] setSessionRuntime:', { sessionId, selection })
     wsManager.send(sessionId, {
       type: 'set_runtime_config',
       ...selection,
@@ -657,6 +661,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   setSessionPermissionMode: (sessionId, mode) => {
     if (!get().sessions[sessionId]) return
     wsManager.send(sessionId, { type: 'set_permission_mode', mode })
+  },
+
+  toggleBilingual: (sessionId: string) => {
+    set((s) => ({
+      sessions: updateSessionIn(s.sessions, sessionId, (session) => ({
+        bilingualEnabled: !session.bilingualEnabled,
+      })),
+    }))
   },
 
   stopGeneration: (sessionId) => {
@@ -1071,6 +1083,26 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             body: notification.body,
             target: { type: 'session', sessionId },
           })
+        }
+        const bilingualSession = get().sessions[sessionId]
+        if (bilingualSession?.bilingualEnabled) {
+          const lastMessage = bilingualSession.messages[bilingualSession.messages.length - 1]
+          if (lastMessage?.type === 'assistant_text' && lastMessage.content.trim() && !lastMessage.translatedContent) {
+            translateApi.translate(lastMessage.content, 'Chinese')
+              .then(({ translatedText }) => {
+                set((st) => {
+                  const s = st.sessions[sessionId]
+                  if (!s) return st
+                  const updatedMessages = s.messages.map((m) =>
+                    m.id === lastMessage.id && m.type === 'assistant_text'
+                      ? { ...m, translatedContent: translatedText }
+                      : m,
+                  )
+                  return { sessions: { ...st.sessions, [sessionId]: { ...s, messages: updatedMessages } } }
+                })
+              })
+              .catch((err) => console.error('[Bilingual] Translation failed:', err))
+          }
         }
         break
       }
