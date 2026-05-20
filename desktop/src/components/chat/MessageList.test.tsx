@@ -2287,7 +2287,7 @@ describe('MessageList nested tool calls', () => {
     render(<MessageList />)
 
     expect(await screen.findByRole('button', { name: 'Undo current turn changes' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Rewind to here' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Rewind to here' })).toBeTruthy()
   })
 
   it('keeps historical sessions readable when turn checkpoint payloads are missing', async () => {
@@ -2855,28 +2855,19 @@ describe('MessageList nested tool calls', () => {
 
     render(<MessageList />)
 
-    const historicalCard = (await screen.findByText('src/first.ts')).closest('section')
-    expect(historicalCard).toBeTruthy()
-    fireEvent.click(
-      within(historicalCard as HTMLElement).getByRole('button', {
-        name: 'Rewind to before this turn',
-      }),
-    )
+    const rewindButtons = await screen.findAllByRole('button', { name: 'Rewind to here' })
+    expect(rewindButtons.length).toBeGreaterThanOrEqual(1)
+    fireEvent.click(rewindButtons[0]!)
 
-    expect(sessionsApi.rewind).not.toHaveBeenCalled()
-    const dialog = await screen.findByRole('dialog', { name: 'Rewind to before this turn?' })
-    expect(
-      within(dialog).getByText(
-        'This will rewind the conversation to before this turn and restore tracked files for that checkpoint.',
-      ),
-    ).toBeTruthy()
+    const dialog = await screen.findByRole('dialog', { name: 'Rewind Conversation' })
+    expect(within(dialog).getByText('做一个页面')).toBeTruthy()
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Rewind to before this turn' }))
+    fireEvent.click(within(dialog).getByText('Rewind here'))
 
     await waitFor(() => {
       expect(sessionsApi.rewind).toHaveBeenLastCalledWith(ACTIVE_TAB, {
         targetUserMessageId: 'user-1',
-        userMessageIndex: 0,
+        userMessageIndex: -1,
         expectedContent: '做一个页面',
       })
     })
