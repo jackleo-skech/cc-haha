@@ -13,8 +13,10 @@
 import { SettingsService } from '../services/settingsService.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 import { ensureDesktopCliLauncherInstalled } from '../services/desktopCliLauncherService.js'
+import { ProviderService } from '../services/providerService.js'
 
 const settingsService = new SettingsService()
+const providerService = new ProviderService()
 
 export async function handleSettingsApi(
   req: Request,
@@ -51,6 +53,10 @@ export async function handleSettingsApi(
       case 'cli-launcher':
         if (method !== 'GET') throw methodNotAllowed(method)
         return Response.json(await ensureDesktopCliLauncherInstalled())
+
+      case 'max-output-tokens':
+        if (method !== 'PUT') throw methodNotAllowed(method)
+        return await handleMaxOutputTokens(req)
 
       default:
         throw ApiError.notFound(`Unknown settings endpoint: ${sub}`)
@@ -123,4 +129,14 @@ async function parseJsonBody(req: Request): Promise<Record<string, unknown>> {
 
 function methodNotAllowed(method: string): ApiError {
   return new ApiError(405, `Method ${method} not allowed`, 'METHOD_NOT_ALLOWED')
+}
+
+async function handleMaxOutputTokens(req: Request): Promise<Response> {
+  const body = await parseJsonBody(req)
+  const maxTokens = body.maxTokens
+  if (typeof maxTokens !== 'number' || maxTokens <= 0) {
+    throw ApiError.badRequest('Invalid maxTokens value')
+  }
+  await providerService.updateMaxOutputTokens(maxTokens)
+  return Response.json({ ok: true, maxOutputTokens: maxTokens })
 }

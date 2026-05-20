@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type HTMLAttributes } from 'react'
 import { Sidebar } from './Sidebar'
 import { ContentRouter } from './ContentRouter'
+import { Header } from './Header'
 import { ToastContainer } from '../shared/Toast'
 import { UpdateChecker } from '../shared/UpdateChecker'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -268,6 +269,7 @@ export function AppShell() {
             ) : null}
           </div>
         ) : null}
+        {!isMobileShell ? <Header /> : null}
         {!isMobileShell ? <TabBar /> : null}
         <ContentRouter />
       </main>

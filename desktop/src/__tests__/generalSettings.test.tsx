@@ -241,13 +241,13 @@ describe('Settings > General tab', () => {
     expect(useSettingsStore.getState().setTheme).toHaveBeenCalledWith('white')
   })
 
-  it('marks the pure white appearance theme as selected', () => {
-    useSettingsStore.setState({ theme: 'white' })
+  it('marks the cool appearance theme as selected', () => {
+    useSettingsStore.setState({ theme: 'cool' })
     render(<Settings />)
 
     fireEvent.click(screen.getByText('General'))
 
-    expect(screen.getByRole('button', { name: 'Pure White' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Cool' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: 'Warm Classic' })).toHaveAttribute('aria-pressed', 'false')
   })
 

@@ -8,6 +8,7 @@ import type { Locale } from '../i18n'
 import { useUIStore } from './uiStore'
 
 const LOCALE_STORAGE_KEY = 'cc-haha-locale'
+const SELECTED_MODELS_KEY = 'cc-haha-selected-models'
 let desktopNotificationsSaveQueue: Promise<void> = Promise.resolve()
 
 function getStoredLocale(): Locale {
@@ -16,6 +17,14 @@ function getStoredLocale(): Locale {
     if (stored === 'en' || stored === 'zh') return stored
   } catch { /* localStorage unavailable */ }
   return 'zh'
+}
+
+function getStoredSelectedModels(): string[] {
+  try {
+    const stored = localStorage.getItem(SELECTED_MODELS_KEY)
+    if (stored) return JSON.parse(stored)
+  } catch { /* localStorage unavailable */ }
+  return []
 }
 
 type SettingsStore = {
@@ -35,6 +44,9 @@ type SettingsStore = {
   responseLanguage: string
   isLoading: boolean
   error: string | null
+  selectedModels: string[]
+  toggleModel: (modelId: string) => Promise<void>
+  selectAllModels: (modelIds: string[]) => Promise<void>
 
   fetchAll: () => Promise<void>
   fetchH5Access: () => Promise<void>
@@ -94,7 +106,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         settingsApi.getUser(),
         loadH5AccessSettings(previousH5Access),
       ])
-      const theme = isThemeMode(userSettings.theme) ? userSettings.theme : 'light'
+      const theme = isThemeMode(userSettings.theme) ? userSettings.theme : 'cool'
       useUIStore.getState().setTheme(theme)
       set({
         permissionMode: mode,
@@ -140,6 +152,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await modelsApi.setCurrent(modelId)
     const { model } = await modelsApi.getCurrent()
     set({ currentModel: model })
+    const { useSessionRuntimeStore } = await import('./sessionRuntimeStore')
+    const { useChatStore } = await import('./chatStore')
+    const chatStore = useChatStore.getState()
+    const runtimeStore = useSessionRuntimeStore.getState()
+    for (const sessionId of Object.keys(chatStore.sessions)) {
+      runtimeStore.clearSelection(sessionId)
+      chatStore.setSessionRuntime(sessionId, { providerId: null, modelId })
+    }
   },
 
   setEffort: async (level) => {
@@ -286,6 +306,32 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       await settingsApi.updateUser({ language: language || undefined })
     } catch {
       set({ responseLanguage: prev })
+    }
+  },
+
+  selectedModels: getStoredSelectedModels(),
+
+  toggleModel: async (modelId) => {
+    const prev = get().selectedModels
+    const next = prev.includes(modelId)
+      ? prev.filter(id => id !== modelId)
+      : [...prev, modelId]
+    set({ selectedModels: next })
+    try { localStorage.setItem(SELECTED_MODELS_KEY, JSON.stringify(next)) } catch { /* noop */ }
+
+    await get().setModel(modelId)
+  },
+
+  selectAllModels: async (modelIds) => {
+    const next = [...modelIds]
+    set({ selectedModels: next })
+    try { localStorage.setItem(SELECTED_MODELS_KEY, JSON.stringify(next)) } catch { /* noop */ }
+
+    if (modelIds.length > 0) {
+      const firstModel = modelIds[0]
+      if (firstModel) {
+        await get().setModel(firstModel)
+      }
     }
   },
 }))

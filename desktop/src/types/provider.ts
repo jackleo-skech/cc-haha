@@ -14,6 +14,7 @@ export type ModelMapping = {
   haiku: string
   sonnet: string
   opus: string
+  translate?: string
 }
 
 export type ModelContextWindows = Record<string, number>

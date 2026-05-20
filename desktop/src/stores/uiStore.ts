@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { isThemeMode, THEME_MODES, type ThemeMode } from '../types/settings'
+import { isThemeMode, type ThemeMode } from '../types/settings'
 
 const THEME_STORAGE_KEY = 'cc-haha-theme'
 
@@ -84,8 +84,7 @@ export const useUIStore = create<UIStore>((set) => ({
 
   toggleTheme: () => {
     set((state) => {
-      const currentIndex = THEME_MODES.indexOf(state.theme)
-      const next = THEME_MODES[(currentIndex + 1) % THEME_MODES.length] ?? 'light'
+      const next = state.theme === 'light' ? 'dark' : state.theme === 'dark' ? 'cool' : 'light'
       applyTheme(next)
       try { localStorage.setItem(THEME_STORAGE_KEY, next) } catch { /* noop */ }
       return { theme: next }

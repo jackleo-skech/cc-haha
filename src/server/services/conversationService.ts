@@ -860,6 +860,7 @@ export class ConversationService {
       'CC_HAHA_SEND_DISABLED_THINKING',
       'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
       'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',
+      'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
     ] as const
 
     const cleanEnv = { ...process.env }
@@ -895,11 +896,15 @@ export class ConversationService {
       // Diagnostics must never block session startup.
     }
 
+    const managedSettings = await this.providerService.getManagedSettings()
+    const maxOutputTokens = (managedSettings.max_output_tokens as number) ?? 4096
+
     return {
       ...cleanEnv,
       CLAUDE_CODE_ENABLE_TASKS: '1',
       CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1',
       CLAUDE_CODE_DIAGNOSTICS_FILE: cliDiagnosticsPath,
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxOutputTokens),
       CALLER_DIR: workDir,
       PWD: workDir,
       ...(sdkUrl

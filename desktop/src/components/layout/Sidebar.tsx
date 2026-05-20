@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../shared/ConfirmDialog'
 import type { SessionListItem } from '../../types/session'
 import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID } from '../../stores/tabStore'
 import { useChatStore } from '../../stores/chatStore'
+import { sessionsApi } from '../../api/sessions'
 
 const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)
 const isWindows = typeof navigator !== 'undefined' && /Win/.test(navigator.platform)
@@ -200,6 +201,49 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
     setRenameValue('')
   }, [renamingId, renameValue, renameSession])
 
+  const handleExport = useCallback(async (id: string) => {
+    try {
+      const data = await sessionsApi.export(id)
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const session = sessions.find((s) => s.id === id)
+      a.href = url
+      a.download = `session-${session?.title || id}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      addToast({
+        type: 'error',
+        message: error instanceof Error ? error.message : t('sidebar.exportFailed'),
+      })
+    }
+  }, [sessions, addToast, t])
+
+  const handleImport = useCallback(() => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json'
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (!file) return
+
+      try {
+        const text = await file.text()
+        const data = JSON.parse(text)
+        await sessionsApi.import(data)
+        await fetchSessions()
+        addToast({ type: 'success', message: t('sidebar.importSuccess') })
+      } catch (error) {
+        addToast({
+          type: 'error',
+          message: error instanceof Error ? error.message : t('sidebar.importFailed'),
+        })
+      }
+    }
+    input.click()
+  }, [fetchSessions, addToast, t])
+
   const startDraggingRef = useRef<(() => Promise<void>) | null>(null)
 
   useEffect(() => {
@@ -375,6 +419,16 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="min-w-0 flex-1 bg-transparent pl-2 pr-0 text-[13px] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none"
                 />
+                {!isBatchMode && (
+                  <button
+                    type="button"
+                    onClick={handleImport}
+                    className="ml-2 flex h-6 items-center rounded-md px-2 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-sidebar-item-hover)] hover:text-[var(--color-text-primary)]"
+                    title={t('sidebar.import')}
+                  >
+                    {t('sidebar.import')}
+                  </button>
+                )}
               </div>
               <button
                 type="button"
@@ -414,7 +468,7 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                     <span className="material-symbols-outlined text-[17px]">close</span>
                   </button>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-1.5">
+                <div className="mt-2 grid grid-cols-3 gap-1.5">
                   <button
                     type="button"
                     onClick={() => {
@@ -430,6 +484,19 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                     {filteredSessionIds.length > 0 && filteredSessionIds.every((id) => selectedSessionIds.has(id))
                       ? t('sidebar.batchDeselectAll')
                       : t('sidebar.batchSelectAll')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (selectedCount === 1) {
+                        const id = [...selectedSessionIds][0]
+                        if (id) handleExport(id)
+                      }
+                    }}
+                    disabled={selectedCount !== 1}
+                    className="rounded-md border border-[var(--color-border)] px-2 py-1.5 text-xs font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] disabled:opacity-50"
+                  >
+                    {t('sidebar.export')}
                   </button>
                   <button
                     type="button"
@@ -510,65 +577,104 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                             className="ml-1 w-full rounded-[var(--radius-md)] border border-[var(--color-border-focus)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none"
                           />
                         ) : (
-                          <button
-                            onClick={(event) => {
-                              if (isBatchMode) {
-                                handleBatchSessionClick(event, session.id)
-                                return
-                              }
-                              useTabStore.getState().openTab(session.id, session.title)
-                              useChatStore.getState().connectToSession(session.id)
-                              closeMobileDrawer()
-                            }}
-                            onContextMenu={(e) => handleContextMenu(e, session.id)}
-                            className={`
-                              group w-full rounded-[12px] border px-3 ${isMobile ? 'py-3' : 'py-2'} text-left text-sm transition-[background,border-color,box-shadow,filter,color] duration-200
-                              ${selectedSessionIds.has(session.id)
-                                ? 'sidebar-session-row--selected border-[var(--color-sidebar-item-active-border)] bg-[var(--color-sidebar-item-active)] text-[var(--color-text-primary)] shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_3px_10px_rgba(143,72,47,0.07)] hover:brightness-[0.995]'
-                                : session.id === activeTabId
-                                ? 'sidebar-session-row--active border-transparent bg-[var(--color-sidebar-item-active)] text-[var(--color-text-primary)]'
-                                : 'sidebar-session-row--idle border-transparent text-[var(--color-text-secondary)] hover:bg-[var(--color-sidebar-item-hover)]'
-                              }
-                            `}
-                            aria-pressed={isBatchMode ? selectedSessionIds.has(session.id) : undefined}
-                          >
-                            <span className="flex items-center gap-2.5">
-                              {isBatchMode ? (
-                                <span
-                                  className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[5px] border transition-colors ${
-                                    selectedSessionIds.has(session.id)
-                                      ? 'border-[var(--color-brand)] bg-[var(--color-brand)] text-white'
-                                      : 'border-[var(--color-border)] bg-[var(--color-surface)]'
-                                  }`}
-                                  aria-hidden="true"
-                                >
-                                  {selectedSessionIds.has(session.id) && (
-                                    <span className="material-symbols-outlined text-[12px]">check</span>
-                                  )}
+                          <div className="group relative">
+                            <button
+                              onClick={(event) => {
+                                if (isBatchMode) {
+                                  handleBatchSessionClick(event, session.id)
+                                  return
+                                }
+                                useTabStore.getState().openTab(session.id, session.title)
+                                useChatStore.getState().connectToSession(session.id)
+                                closeMobileDrawer()
+                              }}
+                              onContextMenu={(e) => handleContextMenu(e, session.id)}
+                              className={`
+                                w-full rounded-[12px] border px-3 ${isMobile ? 'py-3' : 'py-2'} text-left text-sm transition-[background,border-color,box-shadow,filter,color] duration-200
+                                ${selectedSessionIds.has(session.id)
+                                  ? 'sidebar-session-row--selected border-[var(--color-sidebar-item-active-border)] bg-[var(--color-sidebar-item-active)] text-[var(--color-text-primary)] shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_3px_10px_rgba(143,72,47,0.07)] hover:brightness-[0.995]'
+                                  : session.id === activeTabId
+                                  ? 'sidebar-session-row--active border-transparent bg-[var(--color-sidebar-item-active)] text-[var(--color-text-primary)]'
+                                  : 'sidebar-session-row--idle border-transparent text-[var(--color-text-secondary)] hover:bg-[var(--color-sidebar-item-hover)]'
+                                }
+                              `}
+                              aria-pressed={isBatchMode ? selectedSessionIds.has(session.id) : undefined}
+                            >
+                              <span className="flex items-center gap-2.5">
+                                {isBatchMode ? (
+                                  <span
+                                    className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[5px] border transition-colors ${
+                                      selectedSessionIds.has(session.id)
+                                        ? 'border-[var(--color-brand)] bg-[var(--color-brand)] text-white'
+                                        : 'border-[var(--color-border)] bg-[var(--color-surface)]'
+                                    }`}
+                                    aria-hidden="true"
+                                  >
+                                    {selectedSessionIds.has(session.id) && (
+                                      <span className="material-symbols-outlined text-[12px]">check</span>
+                                    )}
+                                  </span>
+                                ) : (
+                                  <span
+                                    className="h-1.5 w-1.5 flex-shrink-0 rounded-full"
+                                    style={{
+                                      backgroundColor: session.id === activeTabId ? 'var(--color-brand)' : 'var(--color-text-tertiary)',
+                                      opacity: session.id === activeTabId ? 1 : 0.5,
+                                    }}
+                                  />
+                                )}
+                                <span className="flex-1 truncate font-medium tracking-[-0.01em]">{session.title || 'Untitled'}</span>
+                                {!session.workDirExists && (
+                                  <span
+                                    className="flex-shrink-0 text-[10px] text-[var(--color-warning)]"
+                                    title={session.workDir ?? ''}
+                                  >
+                                    {t('sidebar.missingDir')}
+                                  </span>
+                                )}
+                                <span className="flex-shrink-0 text-[10px] text-[var(--color-text-tertiary)] opacity-0 transition-opacity group-hover:opacity-100">
+                                  {formatRelativeTime(session.modifiedAt)}
                                 </span>
-                              ) : (
-                                <span
-                                  className="h-1.5 w-1.5 flex-shrink-0 rounded-full"
-                                  style={{
-                                    backgroundColor: session.id === activeTabId ? 'var(--color-brand)' : 'var(--color-text-tertiary)',
-                                    opacity: session.id === activeTabId ? 1 : 0.5,
-                                  }}
-                                />
-                              )}
-                              <span className="flex-1 truncate font-medium tracking-[-0.01em]">{session.title || 'Untitled'}</span>
-                              {!session.workDirExists && (
-                                <span
-                                  className="flex-shrink-0 text-[10px] text-[var(--color-warning)]"
-                                  title={session.workDir ?? ''}
-                                >
-                                  {t('sidebar.missingDir')}
-                                </span>
-                              )}
-                              <span className="flex-shrink-0 text-[10px] text-[var(--color-text-tertiary)] opacity-0 transition-opacity group-hover:opacity-100">
-                                {formatRelativeTime(session.modifiedAt)}
                               </span>
-                            </span>
-                          </button>
+                            </button>
+                            {!isBatchMode && (
+                              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 pointer-events-none">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleStartRename(session.id, session.title || '')
+                                  }}
+                                  className="flex h-6 w-6 items-center justify-center rounded text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-sidebar-item-hover)] hover:text-[var(--color-text-primary)] pointer-events-auto"
+                                  title={t('common.rename')}
+                                >
+                                  <span className="material-symbols-outlined text-[14px]">edit</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleExport(session.id)
+                                  }}
+                                  className="flex h-6 w-6 items-center justify-center rounded text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-sidebar-item-hover)] hover:text-[var(--color-text-primary)] pointer-events-auto"
+                                  title={t('sidebar.export')}
+                                >
+                                  <span className="material-symbols-outlined text-[14px]">download</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleDelete(session.id)
+                                  }}
+                                  className="flex h-6 w-6 items-center justify-center rounded text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-sidebar-item-hover)] hover:text-[var(--color-error)] pointer-events-auto"
+                                  title={t('common.delete')}
+                                >
+                                  <span className="material-symbols-outlined text-[14px]">delete</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
                     ))}

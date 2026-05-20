@@ -18,7 +18,8 @@ import { ModelSelector } from '../controls/ModelSelector'
 import type { AttachmentRef } from '../../types/chat'
 import { AttachmentGallery } from './AttachmentGallery'
 import { ProjectContextChip } from '../shared/ProjectContextChip'
-import { RepositoryLaunchControls } from '../shared/RepositoryLaunchControls'
+
+import { DirectoryPicker } from '../shared/DirectoryPicker'
 import { FileSearchMenu, type FileSearchMenuHandle } from './FileSearchMenu'
 import { LocalSlashCommandPanel, type LocalSlashCommandName } from './LocalSlashCommandPanel'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
@@ -115,7 +116,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       return next
     })
   }, [])
-  const { sendMessage, stopGeneration } = useChatStore()
+  const { sendMessage, stopGeneration, toggleBilingual } = useChatStore()
   const activeTabId = useTabStore((s) => s.activeTabId)
   const sessionState = useChatStore((s) => activeTabId ? s.sessions[activeTabId] : undefined)
   const chatState = sessionState?.chatState ?? 'idle'
@@ -154,10 +155,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   const pendingSlashUiAction = !isMemberSession && input.trim().startsWith('/')
     ? resolveSlashUiAction(input.trim().slice(1))
     : null
-  const canSubmit = !isWorkspaceMissing &&
-    !launchTransitioning &&
-    (!showLaunchControls || launchReady || !!pendingSlashUiAction) &&
-    (input.trim().length > 0 || (!isMemberSession && (attachments.length > 0 || hasWorkspaceReferences)))
+  const canSubmit = !isWorkspaceMissing && (input.trim().length > 0 || (!isMemberSession && (attachments.length > 0 || hasWorkspaceReferences)))
   const composerAttachments = useMemo(
     () => [
       ...attachments,
@@ -468,26 +466,6 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     return newId
   }, [activeTabId])
 
-  const handleLaunchWorkDirChange = useCallback(async (newWorkDir: string) => {
-    setLaunchWorkDir(newWorkDir)
-    setLaunchBranch(null)
-    setLaunchUseWorktree(false)
-    setLaunchReady(!newWorkDir)
-    if (!activeTabId) return
-
-    setLaunchTransitioning(true)
-    try {
-      await replaceEmptySession(newWorkDir)
-    } catch (error) {
-      useUIStore.getState().addToast({
-        type: 'error',
-        message: error instanceof Error ? error.message : t('empty.failedToCreate'),
-      })
-    } finally {
-      setLaunchTransitioning(false)
-    }
-  }, [activeTabId, replaceEmptySession, t])
-
   const handleSubmit = async () => {
     const text = input.trim()
     if ((!text && ((!attachments.length && !hasWorkspaceReferences) || isMemberSession)) || isWorkspaceMissing) return
@@ -790,10 +768,10 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       <div
         className={
           isHeroComposer
-            ? 'mx-auto flex w-full max-w-3xl flex-col'
+            ? 'mx-auto flex w-full max-w-[960px] flex-col'
           : compact
-              ? 'mx-auto max-w-full'
-              : `${isMobileComposer ? 'mx-0 max-w-none' : 'mx-auto max-w-[860px]'}`
+              ? 'mx-auto max-w-[960px]'
+              : `${isMobileComposer ? 'mx-0 max-w-none' : 'mx-auto max-w-[960px]'}`
         }
       >
         <div
@@ -993,6 +971,44 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
                   </div>
 
                   <PermissionModeSelector compact={useCompactControls} />
+
+                  <div className="flex items-center gap-0.5 border-l border-[var(--color-border-separator)] pl-2">
+                    <button
+                      onClick={() => { useUIStore.getState().setPendingSettingsTab('terminal'); useTabStore.getState().openTab(SETTINGS_TAB_ID, 'Settings', 'settings') }}
+                      title={t('settings.tab.terminal')}
+                      className="rounded-[var(--radius-md)] p-1.5 text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">terminal</span>
+                    </button>
+                    <button
+                      onClick={() => { useUIStore.getState().setPendingSettingsTab('mcp'); useTabStore.getState().openTab(SETTINGS_TAB_ID, 'Settings', 'settings') }}
+                      title={t('settings.tab.mcp')}
+                      className="rounded-[var(--radius-md)] p-1.5 text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">dns</span>
+                    </button>
+                    <button
+                      onClick={() => { useUIStore.getState().setPendingSettingsTab('skills'); useTabStore.getState().openTab(SETTINGS_TAB_ID, 'Settings', 'settings') }}
+                      title={t('settings.tab.skills')}
+                      className="rounded-[var(--radius-md)] p-1.5 text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">auto_awesome</span>
+                    </button>
+                    <button
+                      onClick={() => { useUIStore.getState().setPendingSettingsTab('plugins'); useTabStore.getState().openTab(SETTINGS_TAB_ID, 'Settings', 'settings') }}
+                      title={t('settings.tab.plugins')}
+                      className="rounded-[var(--radius-md)] p-1.5 text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">extension</span>
+                    </button>
+                    <button
+                      onClick={() => { useUIStore.getState().setPendingSettingsTab('agents'); useTabStore.getState().openTab(SETTINGS_TAB_ID, 'Settings', 'settings') }}
+                      title={t('settings.tab.agents')}
+                      className="rounded-[var(--radius-md)] p-1.5 text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+                    </button>
+                  </div>
                 </>
               )}
             </div>
@@ -1044,7 +1060,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
         <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
 
         {!isMemberSession && (
-          <div className={useCompactControls ? 'mt-2 flex min-w-0 px-1' : 'mt-3 px-1'}>
+          <div className={useCompactControls ? 'mt-2 flex min-w-0 items-center justify-center gap-3 px-1' : 'mt-3 flex min-w-0 items-center gap-3 px-1'}>
             {messageCount > 0 ? (
               <ProjectContextChip
                 workDir={resolvedWorkDir}
@@ -1057,16 +1073,37 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
                 compact={useCompactControls}
               />
             ) : (
-              <RepositoryLaunchControls
-                workDir={activeLaunchWorkDir}
-                onWorkDirChange={handleLaunchWorkDirChange}
-                branch={launchBranch}
-                onBranchChange={setLaunchBranch}
-                useWorktree={launchUseWorktree}
-                onUseWorktreeChange={setLaunchUseWorktree}
-                onLaunchReadyChange={setLaunchReady}
-                disabled={isActive || launchTransitioning}
+              <DirectoryPicker
+                value={resolvedWorkDir || ''}
+                onChange={async (newWorkDir) => {
+                  if (!activeTabId) return
+                  const oldId = activeTabId
+                  const { deleteSession, createSession } = useSessionStore.getState()
+                  const { replaceTabSession } = useTabStore.getState()
+                  const { disconnectSession, connectToSession } = useChatStore.getState()
+                  const newId = await createSession(newWorkDir)
+                  useSessionRuntimeStore.getState().moveSelection(oldId, newId)
+                  disconnectSession(oldId)
+                  replaceTabSession(oldId, newId)
+                  connectToSession(newId)
+                  deleteSession(oldId).catch(() => {})
+                }}
               />
+            )}
+            {activeTabId && (
+              <button
+                type="button"
+                onClick={() => toggleBilingual(activeTabId)}
+                title={sessionState?.bilingualEnabled ? t('chat.bilingualOn') : t('chat.bilingualOff')}
+                className={`inline-flex min-h-7 items-center gap-1 rounded-full border px-2.5 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/35 ${
+                  sessionState?.bilingualEnabled
+                    ? 'border-[var(--color-brand)]/35 bg-[var(--color-brand)]/10 text-[var(--color-brand)]'
+                    : 'border-[var(--color-border)]/70 bg-[var(--color-surface-container-low)] text-[var(--color-text-tertiary)] hover:border-[var(--color-brand)]/35 hover:text-[var(--color-text-primary)]'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[14px]">translate</span>
+                <span className="hidden min-[920px]:inline">{sessionState?.bilingualEnabled ? t('chat.bilingualOn') : t('chat.bilingualOff')}</span>
+              </button>
             )}
           </div>
         )}
