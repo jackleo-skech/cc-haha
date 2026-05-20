@@ -9,6 +9,7 @@ import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID } from '../../stores/tab
 import { useChatStore } from '../../stores/chatStore'
 import { useOpenTargetStore } from '../../stores/openTargetStore'
 import { desktopUiPreferencesApi, type SidebarProjectPreferences } from '../../api/desktopUiPreferences'
+import { sessionsApi } from '../../api/sessions'
 
 const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)
 const isWindows = typeof navigator !== 'undefined' && /Win/.test(navigator.platform)
@@ -559,6 +560,49 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
     setRenameValue('')
   }, [renamingId, renameValue, renameSession])
 
+  const handleExport = useCallback(async (id: string) => {
+    try {
+      const data = await sessionsApi.export(id)
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const session = sessions.find((s) => s.id === id)
+      a.href = url
+      a.download = `session-${session?.title || id}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      addToast({
+        type: 'error',
+        message: error instanceof Error ? error.message : t('sidebar.exportFailed'),
+      })
+    }
+  }, [sessions, addToast, t])
+
+  const handleImport = useCallback(() => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json'
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (!file) return
+
+      try {
+        const text = await file.text()
+        const data = JSON.parse(text)
+        await sessionsApi.import(data)
+        await fetchSessions()
+        addToast({ type: 'success', message: t('sidebar.importSuccess') })
+      } catch (error) {
+        addToast({
+          type: 'error',
+          message: error instanceof Error ? error.message : t('sidebar.importFailed'),
+        })
+      }
+    }
+    input.click()
+  }, [fetchSessions, addToast, t])
+
   const startDraggingRef = useRef<(() => Promise<void>) | null>(null)
 
   useEffect(() => {
@@ -708,6 +752,16 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="min-w-0 flex-1 bg-transparent pl-2 pr-0 text-[13px] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none"
                 />
+                {!isBatchMode && (
+                  <button
+                    type="button"
+                    onClick={handleImport}
+                    className="ml-2 flex h-6 items-center rounded-md px-2 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-sidebar-item-hover)] hover:text-[var(--color-text-primary)]"
+                    title={t('sidebar.import')}
+                  >
+                    {t('sidebar.import')}
+                  </button>
+                )}
               </div>
               <button
                 type="button"
@@ -757,7 +811,7 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                     <span className="material-symbols-outlined text-[17px]">close</span>
                   </button>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-1.5">
+                <div className="mt-2 grid grid-cols-3 gap-1.5">
                   <button
                     type="button"
                     onClick={() => {
@@ -773,6 +827,19 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                     {filteredSessionIds.length > 0 && filteredSessionIds.every((id) => selectedSessionIds.has(id))
                       ? t('sidebar.batchDeselectAll')
                       : t('sidebar.batchSelectAll')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (selectedCount === 1) {
+                        const id = [...selectedSessionIds][0]
+                        if (id) handleExport(id)
+                      }
+                    }}
+                    disabled={selectedCount !== 1}
+                    className="rounded-md border border-[var(--color-border)] px-2 py-1.5 text-xs font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] disabled:opacity-50"
+                  >
+                    {t('sidebar.export')}
                   </button>
                   <button
                     type="button"
@@ -1063,6 +1130,12 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
             className="w-full px-3 py-1.5 text-left text-xs text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('common.rename')}
+          </button>
+          <button
+            onClick={() => handleExport(contextMenu.id)}
+            className="w-full px-3 py-1.5 text-left text-xs text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
+          >
+            {t('sidebar.export')}
           </button>
           <button
             onClick={() => handleDelete(contextMenu.id)}
