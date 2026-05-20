@@ -495,6 +495,8 @@ async function handleSetRuntimeConfig(
   message: Extract<ClientMessage, { type: 'set_runtime_config' }>
 ) {
   const { sessionId } = ws.data
+  console.debug('[WS] handleSetRuntimeConfig:', { sessionId, message })
+  
   const modelId = typeof message.modelId === 'string' ? message.modelId.trim() : ''
   if (!modelId) {
     sendMessage(ws, {
@@ -517,12 +519,14 @@ async function handleSetRuntimeConfig(
     prevOverride.providerId === nextOverride.providerId &&
     prevOverride.modelId === nextOverride.modelId
   ) {
+    console.debug('[WS] Runtime config unchanged, skipping restart')
     return
   }
 
   if (!conversationService.hasSession(sessionId)) {
     const pendingStartup = sessionStartupPromises.get(sessionId)
     if (pendingStartup) {
+      console.debug('[WS] Session starting, enqueuing runtime transition')
       await enqueueRuntimeTransition(sessionId, async () => {
         await pendingStartup.catch(() => undefined)
         const currentOverride = runtimeOverrides.get(sessionId)
@@ -535,10 +539,13 @@ async function handleSetRuntimeConfig(
         }
         await restartSessionWithRuntimeConfig(ws, sessionId)
       })
+    } else {
+      console.debug('[WS] No pending startup, runtime config stored for future use')
     }
     return
   }
 
+  console.debug('[WS] Restarting session with new runtime config')
   await enqueueRuntimeTransition(sessionId, () =>
     restartSessionWithRuntimeConfig(ws, sessionId),
   )
