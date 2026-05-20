@@ -25,10 +25,13 @@ vi.mock('../../lib/desktopRuntime', () => ({
     error instanceof Error && error.name === 'H5ConnectionRequiredError',
 }))
 
-vi.mock('../../stores/settingsStore', () => ({
-  useSettingsStore: (selector: (state: { fetchAll: typeof mocks.fetchAll }) => unknown) =>
-    selector({ fetchAll: mocks.fetchAll }),
-}))
+vi.mock('../../stores/settingsStore', () => {
+  const storeState = () => ({ fetchAll: mocks.fetchAll, locale: 'en', setLocale: vi.fn(), theme: 'white', setTheme: vi.fn(), currentModel: 'model', selectedModels: [] })
+  return {
+    useSettingsStore: (selector?: (state: ReturnType<typeof storeState>) => unknown) =>
+      selector ? selector(storeState()) : storeState(),
+  }
+})
 
 vi.mock('../../hooks/useMobileViewport', () => ({
   useMobileViewport: () => mocks.isMobile,
