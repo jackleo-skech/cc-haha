@@ -779,6 +779,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
             ANTHROPIC_DEFAULT_HAIKU_MODEL: normalizedModels.haiku,
             ANTHROPIC_DEFAULT_SONNET_MODEL: normalizedModels.sonnet,
             ANTHROPIC_DEFAULT_OPUS_MODEL: normalizedModels.opus,
+            ...(normalizedModels.translate ? { TRANSLATE_MODEL: normalizedModels.translate } : {}),
           },
         }
         setSettingsJson(JSON.stringify(merged, null, 2))
