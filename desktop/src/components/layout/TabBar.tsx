@@ -93,18 +93,27 @@ export function TabBar() {
     setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
   }, [])
 
+  const handleWheel = useCallback((e: WheelEvent) => {
+    const el = scrollRef.current
+    if (!el || el.scrollWidth <= el.clientWidth) return
+    e.preventDefault()
+    el.scrollBy({ left: e.deltaY, behavior: 'instant' })
+  }, [])
+
   useEffect(() => {
     updateScrollState()
     const el = scrollRef.current
     if (!el) return
     el.addEventListener('scroll', updateScrollState)
+    el.addEventListener('wheel', handleWheel, { passive: false })
     const ro = new ResizeObserver(updateScrollState)
     ro.observe(el)
     return () => {
       el.removeEventListener('scroll', updateScrollState)
+      el.removeEventListener('wheel', handleWheel)
       ro.disconnect()
     }
-  }, [updateScrollState, tabs.length])
+  }, [updateScrollState, tabs.length, handleWheel])
 
   useEffect(() => {
     if (!activeTabId) return

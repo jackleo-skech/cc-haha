@@ -21,6 +21,9 @@ type AuthStatusResponse = {
 }
 
 export const providersApi = {
+  saveMaxOutputTokens(maxOutputTokens: number) {
+      return api.put<{ ok: true; maxOutputTokens: number }>('/api/settings/max-output-tokens', { maxOutputTokens })
+    },
   list() {
     return api.get<ProvidersResponse>('/api/providers')
   },
