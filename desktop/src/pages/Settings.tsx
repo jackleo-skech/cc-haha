@@ -796,7 +796,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
     setBaseUrl(preset.baseUrl)
     setApiFormat(preset.apiFormat ?? 'anthropic')
     setAuthStrategy(getPresetAuthStrategy(preset))
-    setModels({ ...preset.defaultModels })
+    setModels((prev) => ({ ...preset.defaultModels, translate: prev.translate }))
     setModelContextInputs(getModelContextInputs(preset.defaultModels, preset))
     setAutoCompactWindow(getPresetAutoCompactWindow(preset))
     setShowContextSettings(false)
@@ -1355,6 +1355,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
                   if (env.ANTHROPIC_DEFAULT_HAIKU_MODEL) newModels.haiku = env.ANTHROPIC_DEFAULT_HAIKU_MODEL
                   if (env.ANTHROPIC_DEFAULT_SONNET_MODEL) newModels.sonnet = env.ANTHROPIC_DEFAULT_SONNET_MODEL
                   if (env.ANTHROPIC_DEFAULT_OPUS_MODEL) newModels.opus = env.ANTHROPIC_DEFAULT_OPUS_MODEL
+                  if (env.TRANSLATE_MODEL) newModels.translate = env.TRANSLATE_MODEL
                   if (Object.keys(newModels).length > 0) {
                     setModels((prev) => {
                       const nextModels = { ...prev, ...newModels }
