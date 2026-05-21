@@ -147,6 +147,18 @@ for /f "delims=" %%i in ('rustc --version 2^>nul') do echo [Rust] %%i
 for /f "delims=" %%i in ('cargo --version 2^>nul') do echo [Cargo] %%i
 echo.
 
+echo [1/2] Starting Vite dev server...
+start "Vite Dev Server" cmd /k "cd /d "%~dp0desktop" && bun run dev"
+
+echo Waiting for Vite dev server on http://localhost:1420...
+:wait_vite
+timeout /t 2 /nobreak >nul
+powershell -NoLogo -NoProfile -Command "try { $r = Invoke-WebRequest -Uri 'http://localhost:1420' -UseBasicParsing -TimeoutSec 2; exit 0 } catch { exit 1 }" 2>nul
+if errorlevel 1 goto wait_vite
+echo Vite ready.
+
+echo.
+
 echo ========================================
 echo   Starting Tauri Desktop App...
 echo   (This includes a native interactive terminal)
@@ -155,6 +167,7 @@ echo.
 echo Press Ctrl+C in this window to stop
 echo.
 
+echo [2/2] Launching Tauri...
 cd /d "%~dp0desktop"
 call bun run tauri dev
 goto :END
