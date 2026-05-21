@@ -82,6 +82,9 @@ runtime/__pycache__
 .trae/
 superpowers-main/
 
+# LiteLLM config (contains API keys)
+lite-llm/
+
 # Personal docs / examples
 docs/jws/
 src/examples/
