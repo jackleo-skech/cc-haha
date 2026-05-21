@@ -1,0 +1,309 @@
+{
+  "_schema": 1,
+  "_updated": "2026-05-21",
+  "_description": "Machine-readable fork patch manifest. Each patch can be auto-applied (insert/replace) and verified (grep).",
+
+  "featureBranches": {
+    "fork/feature/cool-theme":  "45c0745 feat: add cool theme to theme modes and Settings UI",
+    "fork/feature/bilingual":   "8e6c252 feat: add bilingual message display with translation support",
+    "fork/feature/rewind":      "afb16e0 feat: add message-level rewind with confirmation dialog",
+    "fork/feature/launch":      "d46c096 feat: add repository launch controls for new sessions",
+    "fork/feature/export":      "80c9f87 feat: add session export in sidebar context menu",
+    "fork/feature/goals":       "4f6063f feat: add /goal slash command and EmptySession refactor",
+    "fork/feature/plugins":     "a858508 fix: wire Header into AppShell layout",
+    "fork/feature/server":      "f41dbe6 feat: server-side custom provider models, liteLLM, translation API",
+    "fork/feature/desktop-env": "67ec296 chore: add desktop env scripts, gitignore, and skills lock"
+  },
+
+  "patches": [
+    {
+      "id": "theme-mode-cool",
+      "feature": "fork/feature/cool-theme",
+      "description": "Add 'cool' to THEME_MODES type",
+      "type": "insert_before",
+      "files": [
+        {
+          "path": "desktop/src/types/settings.ts",
+          "anchor": "]>",
+          "insertBefore": "  | 'cool'\n",
+          "verify": "'cool'"
+        }
+      ]
+    },
+
+    {
+      "id": "theme-css-cool",
+      "feature": "fork/feature/cool-theme",
+      "description": "Add cool theme CSS variables",
+      "type": "insert_after",
+      "files": [
+        {
+          "path": "desktop/src/theme/globals.css",
+          "anchor": "/* @theme */",
+          "insertAfterFile": "desktop/src/theme/globals.css",
+          "insertAfterAnchor": "data-theme=\"white\"",
+          "insertAfter": "\n\n[data-theme=\"cool\"] {\n  --color-brand: #a855f7;\n  --color-brand-hover: #9333ea;\n  --color-surface-primary: #0f0a1a;\n  --color-surface-secondary: #1a1230;\n  --color-surface-tertiary: #2a1f44;\n  --color-text-primary: #e8e0f0;\n  --color-text-secondary: #b8a8d0;\n  --color-text-tertiary: #8870a8;\n  --color-border: #3a2c5c;\n  --color-border-separator: #2a1f44;\n  --color-surface-hover: #2a1f44;\n  --color-surface-container: #1a1230;\n  --color-surface-container-low: #150e28;\n  --color-surface-overlay: #1a1230;\n  --color-surface-raised: #2a1f44;\n  --color-surface-danger: #4a1528;\n  --color-surface-success: #1a3a2a;\n  --color-surface-warning: #3a2c1a;\n  --color-text-danger: #ff6b8a;\n  --color-text-success: #4ade80;\n  --color-text-warning: #fbbf24;\n}",
+          "verify": "data-theme=\"cool\""
+        }
+      ]
+    },
+    {
+      "id": "translate-field-model-mapping-server",
+      "feature": "fork/feature/bilingual",
+      "description": "Add translate to ModelMappingSchema on server",
+      "type": "insert_after",
+      "files": [
+        {
+          "path": "src/server/types/provider.ts",
+          "anchor": "opus: z.string(),",
+          "insertAfter": "\n  translate: z.string().optional(),",
+          "verify": "translate: z.string().optional()"
+        }
+      ]
+    },
+    {
+      "id": "translate-field-model-mapping-client",
+      "feature": "fork/feature/bilingual",
+      "description": "Add translate to ModelMapping type in client",
+      "type": "insert_after",
+      "files": [
+        {
+          "path": "desktop/src/types/providerPreset.ts",
+          "anchor": "opus: string",
+          "insertAfter": "\n  translate?: string",
+          "verify": "translate?: string"
+        },
+        {
+          "path": "desktop/src/types/provider.ts",
+          "anchor": "opus: string",
+          "insertAfter": "\n  translate?: string",
+          "verify": "translate?: string"
+        }
+      ]
+    },
+    {
+      "id": "translate-field-provider-preset-schema",
+      "feature": "fork/feature/bilingual",
+      "description": "Add translate to provider presets ModelMappingSchema",
+      "type": "insert_after",
+      "files": [
+        {
+          "path": "src/server/config/providerPresets.ts",
+          "anchor": "opus: z.string(),",
+          "insertAfter": "\n  translate: z.string().optional(),",
+          "verify": "translate: z.string().optional()"
+        }
+      ]
+    },
+    {
+      "id": "translate-normalize-mapping-server",
+      "feature": "fork/feature/bilingual",
+      "description": "Preserve translate in normalizeModelMapping on server",
+      "type": "replace",
+      "files": [
+        {
+          "path": "src/server/services/providerService.ts",
+          "anchor": "opus: models.opus.trim() || main,",
+          "replace": "opus: models.opus.trim() || main,\n    translate: models.translate?.trim() || undefined,",
+          "verify": "translate: models.translate?.trim()"
+        }
+      ]
+    },
+    {
+      "id": "translate-normalize-mapping-client",
+      "feature": "fork/feature/bilingual",
+      "description": "Add translate normalize function in Settings.tsx",
+      "type": "replace",
+      "files": [
+        {
+          "path": "desktop/src/pages/Settings.tsx",
+          "anchor": "opus: models.opus.trim() || main,",
+          "replace": "opus: models.opus.trim() || main,\n    translate: models.translate?.trim() || undefined,",
+          "verify": "translate: models.translate?.trim()"
+        }
+      ]
+    },
+    {
+      "id": "translate-preserve-on-preset-switch",
+      "feature": "fork/feature/bilingual",
+      "description": "Preserve translate value when switching presets",
+      "type": "replace",
+      "files": [
+        {
+          "path": "desktop/src/pages/Settings.tsx",
+          "anchor": "setModels({ ...preset.defaultModels })",
+          "replace": "setModels((prev) => ({ ...preset.defaultModels, translate: prev.translate }))",
+          "verify": "translate: prev.translate"
+        }
+      ]
+    },
+    {
+      "id": "translate-env-var-settings",
+      "feature": "fork/feature/bilingual",
+      "description": "Add TRANSLATE_MODEL env var to settings JSON",
+      "type": "replace",
+      "files": [
+        {
+          "path": "desktop/src/pages/Settings.tsx",
+          "anchor": "ANTHROPIC_DEFAULT_OPUS_MODEL: normalizedModels.opus,",
+          "replace": "ANTHROPIC_DEFAULT_OPUS_MODEL: normalizedModels.opus,\n            ...(normalizedModels.translate ? { TRANSLATE_MODEL: normalizedModels.translate } : {}),",
+          "verify": "TRANSLATE_MODEL: normalizedModels.translate"
+        }
+      ]
+    },
+    {
+      "id": "translate-env-read-back",
+      "feature": "fork/feature/bilingual",
+      "description": "Read TRANSLATE_MODEL from env when parsing settings JSON",
+      "type": "replace",
+      "files": [
+        {
+          "path": "desktop/src/pages/Settings.tsx",
+          "anchor": "if (env.ANTHROPIC_DEFAULT_OPUS_MODEL) newModels.opus = env.ANTHROPIC_DEFAULT_OPUS_MODEL",
+          "replace": "if (env.ANTHROPIC_DEFAULT_OPUS_MODEL) newModels.opus = env.ANTHROPIC_DEFAULT_OPUS_MODEL\n      if (env.TRANSLATE_MODEL) newModels.translate = env.TRANSLATE_MODEL",
+          "verify": "env.TRANSLATE_MODEL"
+        }
+      ]
+    },
+    {
+      "id": "bilingual-chat-types",
+      "feature": "fork/feature/bilingual",
+      "description": "Add translatedContent to assistant_text message type",
+      "type": "replace",
+      "files": [
+        {
+          "path": "desktop/src/types/chat.ts",
+          "anchor": "content: string; timestamp: number; model?: string",
+          "replace": "content: string; timestamp: number; model?: string; translatedContent?: string",
+          "verify": "translatedContent?"
+        }
+      ]
+    },
+    {
+      "id": "translate-api-route",
+      "feature": "fork/feature/bilingual",
+      "description": "Add /api/translate route in server router",
+      "type": "insert_before",
+      "files": [
+        {
+          "path": "src/server/router.ts",
+          "anchor": "case 'models-catalog':",
+          "insertBefore": "    case 'translate':\n      return handleTranslateApi(req, url, segments)\n",
+          "verify": "case 'translate':"
+        }
+      ]
+    },
+    {
+      "id": "translate-api-import",
+      "feature": "fork/feature/bilingual",
+      "description": "Import handleTranslateApi in server router",
+      "type": "insert_before",
+      "files": [
+        {
+          "path": "src/server/router.ts",
+          "anchor": "import { handleModelsCatalogApi }",
+          "insertBefore": "import { handleTranslateApi } from './api/translate.js'\n",
+          "verify": "handleTranslateApi"
+        }
+      ]
+    },
+    {
+      "id": "session-export-api",
+      "feature": "fork/feature/export",
+      "description": "Add export/import methods to sessions API",
+      "type": "insert_after",
+      "files": [
+        {
+          "path": "desktop/src/api/sessions.ts",
+          "anchor": "duplicate(sessionId: string) {",
+          "insertAfter": "\n\n  export(sessionId: string) {\n    return api.get(`/api/sessions/${sessionId}/export`)\n  },\n\n  import(data: Record<string, unknown>) {\n    return api.post<{ sessionId: string }>('/api/sessions/import', data)\n  },",
+          "verify": "export(sessionId: string)"
+        }
+      ]
+    },
+    {
+      "id": "header-appshell",
+      "feature": "fork/feature/plugins",
+      "description": "Wire Header component into AppShell",
+      "type": "insert_before",
+      "files": [
+        {
+          "path": "desktop/src/components/layout/AppShell.tsx",
+          "anchor": "import { TabBar }",
+          "insertBefore": "import { Header } from './Header'\n",
+          "verify": "import { Header }"
+        }
+      ]
+    },
+    {
+      "id": "header-render",
+      "feature": "fork/feature/plugins",
+      "description": "Render Header component above TabBar in AppShell",
+      "type": "insert_before",
+      "files": [
+        {
+          "path": "desktop/src/components/layout/AppShell.tsx",
+          "anchor": "<TabBar",
+          "insertBefore": "            <Header />\n",
+          "verify": "<Header />"
+        }
+      ]
+    },
+    {
+      "id": "translate-model-type",
+      "feature": "fork/feature/plugins",
+      "description": "Add translate field to ModelMapping type",
+      "type": "insert_after",
+      "files": [
+        {
+          "path": "desktop/src/types/provider.ts",
+          "anchor": "opus: string",
+          "insertAfter": "\n  translate?: string",
+          "verify": "translate?: string"
+        }
+      ]
+    },
+    {
+      "id": "max-output-tokens-api",
+      "feature": "fork/feature/plugins",
+      "description": "Add saveMaxOutputTokens method to providers API",
+      "type": "insert_after",
+      "files": [
+        {
+          "path": "desktop/src/api/providers.ts",
+          "anchor": "export const providersApi = {",
+          "insertAfter": "\n  saveMaxOutputTokens(maxOutputTokens: number) {\n      return api.put<{ ok: true; maxOutputTokens: number }>('/api/settings/max-output-tokens', { maxOutputTokens })\n    },",
+          "verify": "saveMaxOutputTokens"
+        }
+      ]
+    },
+    {
+      "id": "conversation-env-max-tokens",
+      "feature": "fork/feature/server",
+      "description": "Add CLAUDE_CODE_MAX_OUTPUT_TOKENS to conversation env",
+      "type": "replace",
+      "files": [
+        {
+          "path": "src/server/services/conversationService.ts",
+          "anchor": "MANAGED_ENV_KEYS = [",
+          "replace": "MANAGED_ENV_KEYS = [\n  'CLAUDE_CODE_MAX_OUTPUT_TOKENS',",
+          "verify": "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+        }
+      ]
+    },
+    {
+      "id": "gitignore-fork-entries",
+      "feature": "fork/feature/desktop-env",
+      "description": "Add IDE/config entries to .gitignore",
+      "type": "insert_after",
+      "files": [
+        {
+          "path": ".gitignore",
+          "anchor": "# misc",
+          "insertAfter": "\n.agents/\n.history/\n.obsidian/\n.trae/\nsuperpowers-main/\ndocs/jws/\nsrc/examples/",
+          "verify": ".agents/"
+        }
+      ]
+    }
+  ]
+}
